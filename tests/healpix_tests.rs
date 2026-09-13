@@ -140,7 +140,10 @@ fn test_healpix_slider_auto_init_and_axes() {
         .find(|v| v.name == "temp")
         .expect("temp variable");
 
-    let mut app = OctantApp::default();
+    let mut app = OctantApp {
+        active_plot_type: octant::plots::PlotType::Sphere,
+        ..Default::default()
+    };
     init_variable_dimension_defaults(&mut app, temp_var);
 
     // Dim 0 = "time" -> Animated
@@ -149,7 +152,8 @@ fn test_healpix_slider_auto_init_and_axes() {
     assert_eq!(app.dim_config[0].animation, AnimationRole::Animated);
     assert_eq!(app.dim_config[1].spatial, SpatialRole::Z);
     assert_eq!(app.dim_config[2].spatial, SpatialRole::Grid);
-    assert_eq!(app.active_plot_type, octant::plots::PlotType::Heatmap);
+    // Preserves currently active plot type until user explicitly plots data
+    assert_eq!(app.active_plot_type, octant::plots::PlotType::Sphere);
 
     let (x_dim, y_dim, z_dim) = OctantApp::resolve_spatial_axes(
         temp_var.shape.len(),

@@ -43,9 +43,6 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
         app.dim_config[0].active = true;
         app.dim_config[0].range = app.selected_dim_ranges[0];
         app.spatial_dims.push(0);
-        if is_grid {
-            app.active_plot_type = crate::plots::PlotType::Heatmap;
-        }
         return;
     }
 
@@ -61,7 +58,6 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
 
     if let Some(grid_i) = healpix_dim_idx {
         app.dim_config[grid_i].spatial = SpatialRole::Grid;
-        app.active_plot_type = crate::plots::PlotType::Heatmap;
 
         let mut z_assigned = false;
         let mut anim_assigned = false;
@@ -388,6 +384,14 @@ pub fn calculate_selected_2d_elements(app: &OctantApp) -> usize {
 
 /// Checks if 3D Volume / Point Cloud rendering is allowed under GPU storage limits.
 pub fn is_volume_allowed_for_selection(app: &OctantApp) -> bool {
+    // Discrete global grids (HEALPix) do not support 3D Volume or PointCloud raycasting
+    if app
+        .dim_config
+        .iter()
+        .any(|c| c.spatial == crate::app::SpatialRole::Grid)
+    {
+        return false;
+    }
     let elements = calculate_selected_volume_elements(app);
     if elements == 0 && app.active_dataset_metadata.is_some() {
         return false;
