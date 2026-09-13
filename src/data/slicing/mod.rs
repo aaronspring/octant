@@ -2,6 +2,8 @@
 
 pub mod common;
 pub mod coords;
+pub mod copy;
+pub mod slice_1d;
 pub mod slice_2d;
 pub mod slice_3d;
 

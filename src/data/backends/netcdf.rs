@@ -711,7 +711,11 @@ mod tests {
     #[test]
     fn test_create_and_read_netcdf() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join("octant_test_data.nc");
+        let test_file = temp_dir.join(format!(
+            "octant_test_data_{}_{:?}.nc",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let path_str = test_file.to_str().unwrap().to_string();
 
         // Create a test NetCDF file
@@ -797,7 +801,11 @@ mod tests {
     #[test]
     fn test_netcdf_scale_offset_and_fill() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join("octant_test_scale_fill.nc");
+        let test_file = temp_dir.join(format!(
+            "octant_test_scale_fill_{}_{:?}.nc",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let path_str = test_file.to_str().unwrap().to_string();
 
         {
@@ -835,7 +843,11 @@ mod tests {
     #[test]
     fn test_netcdf_1d_variable_loading() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join("octant_test_1d_var.nc");
+        let test_file = temp_dir.join(format!(
+            "octant_test_1d_var_{}_{:?}.nc",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let path_str = test_file.to_str().unwrap().to_string();
 
         {

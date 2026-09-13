@@ -26,10 +26,21 @@ pub fn show_plot_type_menu(app: &mut OctantApp, ui: &mut egui::Ui) {
         .iter()
         .any(|c| c.spatial == crate::app::SpatialRole::Grid);
 
+    let supported_plots = app
+        .matrix_data
+        .as_ref()
+        .map(|m| m.grid.supported_plot_types());
+    let grid_name = app
+        .matrix_data
+        .as_ref()
+        .map(|m| m.grid.name())
+        .unwrap_or("active");
+
     let is_volume_allowed = (is_3d_available || app.volume_data.is_some())
         && is_size_allowed
         && !app.enable_pyramid_resampling
-        && !is_discrete_grid;
+        && supported_plots
+            .is_none_or(|plots| plots.contains(&PlotType::Volume) && !is_discrete_grid);
 
     let total_2d_elements = if let Some(mdata) = &app.matrix_data {
         mdata.width * mdata.height
@@ -115,8 +126,11 @@ pub fn show_plot_type_menu(app: &mut OctantApp, ui: &mut egui::Ui) {
         ];
 
         for (plot_type, icon, label, enabled) in plot_items {
+            let is_supported = supported_plots.is_none_or(|plots| plots.contains(&plot_type));
+            let is_enabled = enabled && is_supported;
             let is_selected = app.active_plot_type == plot_type;
-            if enabled {
+
+            if is_enabled {
                 let clicked = ui
                     .horizontal(|ui| {
                         ui.icon(icon, 14.0);
@@ -129,12 +143,10 @@ pub fn show_plot_type_menu(app: &mut OctantApp, ui: &mut egui::Ui) {
                     ui.close();
                 }
             } else {
-                let reason = if pyramid_disabled {
+                let reason = if !is_supported {
+                    format!("Unsupported for {} grid", grid_name)
+                } else if pyramid_disabled {
                     "Disabled: 2D Pyramid Resampling active".to_string()
-                } else if is_discrete_grid
-                    && (plot_type == PlotType::Volume || plot_type == PlotType::PointCloud)
-                {
-                    "Unsupported for HEALPix grid".to_string()
                 } else if (plot_type == PlotType::Volume || plot_type == PlotType::PointCloud)
                     && !is_3d_available
                 {

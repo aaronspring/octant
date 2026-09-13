@@ -1,6 +1,8 @@
 //! Core coordinate grid representations and mapping functions.
 
-use super::search::find_coord_cell_1d;
+use super::healpix::HealpixOrder;
+use super::topology::GridTopology;
+use crate::plots::PlotType;
 use std::sync::Arc;
 
 /// Represents the coordinate grid configuration for a 2D scalar field slice.
@@ -39,7 +41,7 @@ pub enum CoordinateGrid {
     /// HEALPix (Hierarchical Equal Area isoLatitude Pixelation) discrete global grid.
     Healpix {
         nside: usize,
-        ordering: super::healpix::HealpixOrder,
+        ordering: HealpixOrder,
         npix: usize,
         coords_lon: Option<Arc<[f32]>>,
         coords_lat: Option<Arc<[f32]>>,
@@ -47,24 +49,14 @@ pub enum CoordinateGrid {
 }
 
 impl CoordinateGrid {
-    /// Returns the coordinate mode identifier for the GPU render boundary:
-    /// 0 = GlobalRegular, 1 = RegionalRegular, 2 = Irregular1D, 3 = Curvilinear2D, 4 = Healpix (Ring), 5 = Healpix (Nested).
+    #[inline]
+    pub fn name(&self) -> &'static str {
+        GridTopology::name(self)
+    }
+
     #[inline]
     pub fn render_coord_mode(&self) -> u32 {
-        match self {
-            Self::GlobalRegular => 0,
-            Self::RegionalRegular { .. } => 1,
-            Self::Irregular1D { .. } => 2,
-            Self::Curvilinear2D { .. } => 3,
-            Self::Healpix {
-                ordering: super::healpix::HealpixOrder::Ring,
-                ..
-            } => 4,
-            Self::Healpix {
-                ordering: super::healpix::HealpixOrder::Nested,
-                ..
-            } => 5,
-        }
+        self.shader_coord_mode()
     }
 
     #[inline]
@@ -79,404 +71,52 @@ impl CoordinateGrid {
 
     #[inline]
     pub fn requires_geo_coords(&self) -> bool {
-        !matches!(self, Self::GlobalRegular)
+        GridTopology::requires_geo_coords(self)
     }
 
     #[inline]
-    pub fn same_geometry(&self, other: &Self) -> bool {
-        if self.render_coord_mode() != other.render_coord_mode()
-            || self.geometry_dimensions() != other.geometry_dimensions()
-            || self.lon_bounds_deg() != other.lon_bounds_deg()
-            || self.lat_bounds_deg() != other.lat_bounds_deg()
-        {
-            return false;
-        }
-
-        match (self, other) {
-            (
-                Self::Irregular1D {
-                    coords_x: left_x,
-                    coords_y: left_y,
-                    ..
-                },
-                Self::Irregular1D {
-                    coords_x: right_x,
-                    coords_y: right_y,
-                    ..
-                },
-            ) => {
-                (Arc::ptr_eq(left_x, right_x) || left_x.as_ref() == right_x.as_ref())
-                    && (Arc::ptr_eq(left_y, right_y) || left_y.as_ref() == right_y.as_ref())
-            }
-            (
-                Self::Curvilinear2D {
-                    lons: left_lons,
-                    lats: left_lats,
-                    ..
-                },
-                Self::Curvilinear2D {
-                    lons: right_lons,
-                    lats: right_lats,
-                    ..
-                },
-            ) => {
-                (Arc::ptr_eq(left_lons, right_lons) || left_lons.as_ref() == right_lons.as_ref())
-                    && (Arc::ptr_eq(left_lats, right_lats)
-                        || left_lats.as_ref() == right_lats.as_ref())
-            }
-            (
-                Self::Healpix {
-                    nside: left_nside,
-                    ordering: left_order,
-                    ..
-                },
-                Self::Healpix {
-                    nside: right_nside,
-                    ordering: right_order,
-                    ..
-                },
-            ) => left_nside == right_nside && left_order == right_order,
-            (Self::GlobalRegular, Self::GlobalRegular)
-            | (Self::RegionalRegular { .. }, Self::RegionalRegular { .. }) => true,
-            _ => false,
-        }
+    pub fn lon_bounds_rad(&self) -> [f32; 2] {
+        GridTopology::lon_bounds_rad(self)
     }
 
     #[inline]
-    fn geometry_dimensions(&self) -> (usize, usize) {
-        match self {
-            Self::GlobalRegular | Self::RegionalRegular { .. } => (0, 0),
-            Self::Irregular1D {
-                coords_x, coords_y, ..
-            } => (coords_x.len(), coords_y.len()),
-            Self::Curvilinear2D { lons, lats, .. } => (lons.len(), lats.len()),
-            Self::Healpix { npix, .. } => (*npix, 1),
-        }
+    pub fn lat_bounds_rad(&self) -> [f32; 2] {
+        GridTopology::lat_bounds_rad(self)
     }
 
-    /// Returns `true` if this grid spans the full global extent (~360° lon, ~180° lat).
+    #[inline]
+    pub fn lon_bounds_deg(&self) -> (f32, f32) {
+        GridTopology::lon_bounds_deg(self)
+    }
+
+    #[inline]
+    pub fn lat_bounds_deg(&self) -> (f32, f32) {
+        GridTopology::lat_bounds_deg(self)
+    }
+
     #[inline]
     pub fn is_global(&self) -> bool {
-        matches!(self, Self::GlobalRegular | Self::Healpix { .. }) || self.is_global_extent()
-    }
-
-    /// Returns the longitude bounds [lon_min, lon_max] in radians.
-    pub fn lon_bounds_rad(&self) -> [f32; 2] {
-        let (lon_min, lon_max) = self.lon_bounds_deg();
-        [lon_min.to_radians(), lon_max.to_radians()]
-    }
-
-    /// Returns the latitude bounds [lat_min, lat_max] in radians.
-    pub fn lat_bounds_rad(&self) -> [f32; 2] {
-        let (lat_min, lat_max) = self.lat_bounds_deg();
-        [
-            lat_min.clamp(-90.0, 90.0).to_radians(),
-            lat_max.clamp(-90.0, 90.0).to_radians(),
-        ]
+        GridTopology::is_global(self)
     }
 
     #[inline]
     pub fn is_global_extent(&self) -> bool {
-        let (lon_min, lon_max) = self.lon_bounds_deg();
-        let (lat_min, lat_max) = self.lat_bounds_deg();
-        (lon_max - lon_min).abs() >= 350.0 && (lat_max - lat_min).abs() >= 160.0
+        GridTopology::is_global_extent(self)
     }
 
-    fn lon_bounds_deg(&self) -> (f32, f32) {
-        match self {
-            Self::GlobalRegular => (-180.0, 180.0),
-            Self::RegionalRegular { lon_bounds, .. }
-            | Self::Irregular1D { lon_bounds, .. }
-            | Self::Curvilinear2D { lon_bounds, .. } => *lon_bounds,
-            Self::Healpix { .. } => (0.0, 360.0),
-        }
-    }
-
-    fn lat_bounds_deg(&self) -> (f32, f32) {
-        match self {
-            Self::GlobalRegular => (-90.0, 90.0),
-            Self::RegionalRegular { lat_bounds, .. }
-            | Self::Irregular1D { lat_bounds, .. }
-            | Self::Curvilinear2D { lat_bounds, .. } => *lat_bounds,
-            Self::Healpix { .. } => (-90.0, 90.0),
-        }
-    }
-
-    /// Returns a reference to 1D X-coordinates if this grid is Irregular1D.
-    pub fn coords_x(&self) -> Option<&[f32]> {
-        match self {
-            Self::Irregular1D { coords_x, .. } => Some(coords_x),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to 1D Y-coordinates if this grid is Irregular1D.
-    pub fn coords_y(&self) -> Option<&[f32]> {
-        match self {
-            Self::Irregular1D { coords_y, .. } => Some(coords_y),
-            _ => None,
-        }
-    }
-
-    /// Maps normalized `[0, 1]` viewport coordinates `(norm_x, norm_y)` to pixel cell indices `(px, py)`.
-    pub fn find_cell_from_norm(
-        &self,
-        norm_x: f32,
-        norm_y: f32,
-        width: usize,
-        height: usize,
-    ) -> (usize, usize) {
-        let w = width.max(1);
-        let h = height.max(1);
-        let nx = norm_x.clamp(0.0, 1.0);
-        let ny = norm_y.clamp(0.0, 1.0);
-
-        match self {
-            Self::Irregular1D {
-                coords_x, coords_y, ..
-            } => {
-                let px = if coords_x.len() >= 2 {
-                    let first_x = coords_x[0];
-                    let last_x = coords_x[coords_x.len() - 1];
-                    let target_x = first_x + nx * (last_x - first_x);
-                    find_coord_cell_1d(coords_x, target_x)
-                } else {
-                    ((nx * w as f32).floor() as usize).min(w.saturating_sub(1))
-                };
-
-                let py = if coords_y.len() >= 2 {
-                    let first_y = coords_y[0];
-                    let last_y = coords_y[coords_y.len() - 1];
-                    let target_y = first_y + ny * (last_y - first_y);
-                    find_coord_cell_1d(coords_y, target_y)
-                } else {
-                    ((ny * h as f32).floor() as usize).min(h.saturating_sub(1))
-                };
-
-                (px.min(w.saturating_sub(1)), py.min(h.saturating_sub(1)))
-            }
-            Self::Healpix {
-                nside, ordering, ..
-            } => {
-                let lon_rad = (nx - 0.5) * 2.0 * std::f32::consts::PI;
-                let lat_rad = (0.5 - ny) * std::f32::consts::PI;
-                let px = match ordering {
-                    super::healpix::HealpixOrder::Ring => {
-                        super::healpix::ang2pix_ring(*nside, lon_rad, lat_rad)
-                    }
-                    super::healpix::HealpixOrder::Nested => {
-                        super::healpix::ang2pix_nest(*nside, lon_rad, lat_rad)
-                    }
-                };
-                (px, 0)
-            }
-            _ => {
-                let px = ((nx * w as f32).floor() as usize).min(w.saturating_sub(1));
-                let py = ((ny * h as f32).floor() as usize).min(h.saturating_sub(1));
-                (px, py)
-            }
-        }
-    }
-
-    /// Maps normalized 3D surface model UV coordinates `(u, v)` (where u is along X/longitude and v is along Z/latitude) to cell indices `(px, py)` matching `surface.wgsl`.
-    pub fn find_cell_from_surface_uv(
-        &self,
-        u: f32,
-        v: f32,
-        width: usize,
-        height: usize,
-    ) -> (usize, usize) {
-        match self {
-            Self::Healpix { .. } => {
-                let lon_rad = u.clamp(0.0, 1.0) * 2.0 * std::f32::consts::PI;
-                let lat_rad = (0.5 - v.clamp(0.0, 1.0)) * std::f32::consts::PI;
-                self.find_cell_from_lon_lat_rad(lon_rad, lat_rad, width, height)
-                    .unwrap_or((0, 0))
-            }
-            _ => self.find_cell_from_norm(u.clamp(0.0, 1.0), v.clamp(0.0, 1.0), width, height),
-        }
-    }
-
-    /// Maps geographic spherical coordinates `(lon_rad, lat_rad)` to cell indices `(px, py)`.
-    pub fn find_cell_from_lon_lat_rad(
-        &self,
-        lon_rad: f32,
-        lat_rad: f32,
-        width: usize,
-        height: usize,
-    ) -> Option<(usize, usize)> {
-        let w = width.max(1);
-        let h = height.max(1);
-
-        match self {
-            Self::GlobalRegular => {
-                let u = ((lon_rad + std::f32::consts::PI) / (2.0 * std::f32::consts::PI))
-                    .clamp(0.0, 1.0);
-                let v = (0.5 - (lat_rad / std::f32::consts::PI)).clamp(0.0, 1.0);
-                let px = ((u * w as f32).floor() as usize).min(w.saturating_sub(1));
-                let py = ((v * h as f32).floor() as usize).min(h.saturating_sub(1));
-                Some((px, py))
-            }
-            Self::RegionalRegular { .. } => {
-                let [lon_min, lon_max] = self.lon_bounds_rad();
-                let [lat_min, lat_max] = self.lat_bounds_rad();
-
-                // If dataset is in [0, 2π] and query lon is negative (Western hemisphere), wrap to positive
-                let mut query_lon = lon_rad;
-                if lon_max > std::f32::consts::PI && query_lon < 0.0 {
-                    query_lon += 2.0 * std::f32::consts::PI;
-                }
-
-                if query_lon < lon_min - 0.05
-                    || query_lon > lon_max + 0.05
-                    || lat_rad < lat_min - 0.05
-                    || lat_rad > lat_max + 0.05
-                {
-                    return None;
-                }
-
-                let span_lon = (lon_max - lon_min).abs().max(1e-6);
-                let span_lat = (lat_max - lat_min).abs().max(1e-6);
-
-                let u = ((query_lon - lon_min) / span_lon).clamp(0.0, 1.0);
-                let v = ((lat_max - lat_rad) / span_lat).clamp(0.0, 1.0);
-
-                let px = ((u * w as f32).floor() as usize).min(w.saturating_sub(1));
-                let py = ((v * h as f32).floor() as usize).min(h.saturating_sub(1));
-                Some((px, py))
-            }
-            Self::Irregular1D {
-                coords_x, coords_y, ..
-            } => {
-                let mut lon_deg = lon_rad.to_degrees();
-                let lat_deg = lat_rad.to_degrees();
-
-                if let (Some(&first_x), Some(&last_x)) = (coords_x.first(), coords_x.last()) {
-                    let min_x = first_x.min(last_x);
-                    let max_x = first_x.max(last_x);
-                    if min_x >= -5.0 && max_x > 180.0 && lon_deg < 0.0 {
-                        lon_deg += 360.0;
-                    }
-                }
-
-                let px = if coords_x.len() >= 2 {
-                    find_coord_cell_1d(coords_x, lon_deg)
-                } else {
-                    let u = ((lon_rad + std::f32::consts::PI) / (2.0 * std::f32::consts::PI))
-                        .clamp(0.0, 1.0);
-                    ((u * w as f32).floor() as usize).min(w.saturating_sub(1))
-                };
-
-                let py = if coords_y.len() >= 2 {
-                    find_coord_cell_1d(coords_y, lat_deg)
-                } else {
-                    let v = (0.5 - (lat_rad / std::f32::consts::PI)).clamp(0.0, 1.0);
-                    ((v * h as f32).floor() as usize).min(h.saturating_sub(1))
-                };
-
-                Some((px.min(w.saturating_sub(1)), py.min(h.saturating_sub(1))))
-            }
-            Self::Curvilinear2D { .. } => {
-                let u = ((lon_rad + std::f32::consts::PI) / (2.0 * std::f32::consts::PI))
-                    .clamp(0.0, 1.0);
-                let v = (0.5 - (lat_rad / std::f32::consts::PI)).clamp(0.0, 1.0);
-                let px = ((u * w as f32).floor() as usize).min(w.saturating_sub(1));
-                let py = ((v * h as f32).floor() as usize).min(h.saturating_sub(1));
-                Some((px, py))
-            }
-            Self::Healpix {
-                nside,
-                npix,
-                ordering,
-                ..
-            } => {
-                let px = match ordering {
-                    super::healpix::HealpixOrder::Ring => {
-                        super::healpix::ang2pix_ring(*nside, lon_rad, lat_rad)
-                    }
-                    super::healpix::HealpixOrder::Nested => {
-                        super::healpix::ang2pix_nest(*nside, lon_rad, lat_rad)
-                    }
-                };
-                Some((px.min(npix.saturating_sub(1)), 0))
-            }
-        }
-    }
-
-    /// Computes the normalized `[0, 1]` viewport coordinates `(u_c, v_c)` for the exact center of cell `(px, py)`.
-    pub fn cell_center_norm(
+    #[inline]
+    pub fn cell_center_surface_xz(
         &self,
         px: usize,
         py: usize,
         width: usize,
         height: usize,
+        aspect: f32,
     ) -> (f32, f32) {
-        let w = width.max(1);
-        let h = height.max(1);
-
-        match self {
-            Self::Irregular1D {
-                coords_x, coords_y, ..
-            } => {
-                let u_c = if coords_x.len() >= 2 {
-                    let first_x = coords_x[0];
-                    let last_x = coords_x[coords_x.len() - 1];
-                    let span_x = if (last_x - first_x).abs() > 1e-6 {
-                        last_x - first_x
-                    } else {
-                        1.0
-                    };
-                    let cur_x = coords_x.get(px).copied().unwrap_or(first_x);
-                    ((cur_x - first_x) / span_x).clamp(0.0, 1.0)
-                } else {
-                    (px as f32 + 0.5) / w as f32
-                };
-
-                let v_c = if coords_y.len() >= 2 {
-                    let first_y = coords_y[0];
-                    let last_y = coords_y[coords_y.len() - 1];
-                    let span_y = if (last_y - first_y).abs() > 1e-6 {
-                        last_y - first_y
-                    } else {
-                        1.0
-                    };
-                    let cur_y = coords_y.get(py).copied().unwrap_or(first_y);
-                    ((cur_y - first_y) / span_y).clamp(0.0, 1.0)
-                } else {
-                    (py as f32 + 0.5) / h as f32
-                };
-
-                (u_c, v_c)
-            }
-            Self::Healpix {
-                nside, ordering, ..
-            } => {
-                let (lon_rad, lat_rad) = match ordering {
-                    super::healpix::HealpixOrder::Ring => super::healpix::pix2ang_ring(*nside, px),
-                    super::healpix::HealpixOrder::Nested => {
-                        super::healpix::pix2ang_nest(*nside, px)
-                    }
-                };
-                let two_pi = 2.0 * std::f32::consts::PI;
-                let pi = std::f32::consts::PI;
-                let lon_wrapped = (lon_rad % two_pi + two_pi) % two_pi;
-                let u_c = if lon_wrapped > pi {
-                    (lon_wrapped - two_pi) / two_pi + 0.5
-                } else {
-                    lon_wrapped / two_pi + 0.5
-                };
-                let v_c = 0.5 - lat_rad / pi;
-                (u_c.clamp(0.0, 1.0), v_c.clamp(0.0, 1.0))
-            }
-            _ => {
-                let u_c = (px as f32 + 0.5) / w as f32;
-                let v_c = (py as f32 + 0.5) / h as f32;
-                (u_c, v_c)
-            }
-        }
+        GridTopology::cell_center_surface_xz(self, px, py, width, height, aspect)
     }
 
-    /// Computes the exact geographic longitude and latitude `(lon_rad, lat_rad)` in radians for the center of cell `(px, py)`.
+    #[inline]
     pub fn cell_center_lon_lat_rad(
         &self,
         px: usize,
@@ -484,106 +124,84 @@ impl CoordinateGrid {
         width: usize,
         height: usize,
     ) -> (f32, f32) {
-        let w = width.max(1);
-        let h = height.max(1);
-
-        match self {
-            Self::GlobalRegular => {
-                let u_c = (px as f32 + 0.5) / w as f32;
-                let v_c = (py as f32 + 0.5) / h as f32;
-                let lon_rad = (u_c - 0.5) * 2.0 * std::f32::consts::PI;
-                let lat_rad = (0.5 - v_c) * std::f32::consts::PI;
-                (lon_rad, lat_rad)
-            }
-            Self::RegionalRegular { .. } => {
-                let [lon_min, lon_max] = self.lon_bounds_rad();
-                let [lat_min, lat_max] = self.lat_bounds_rad();
-                let lon_rad = if w > 1 {
-                    lon_min + (px as f32 / (w - 1) as f32) * (lon_max - lon_min)
-                } else {
-                    lon_min
-                };
-                let lat_rad = if h > 1 {
-                    lat_max - (py as f32 / (h - 1) as f32) * (lat_max - lat_min)
-                } else {
-                    lat_max
-                };
-                (lon_rad, lat_rad)
-            }
-            Self::Irregular1D {
-                coords_x, coords_y, ..
-            } => {
-                let deg_lon = coords_x.get(px).copied().unwrap_or(0.0);
-                let deg_lat = coords_y.get(py).copied().unwrap_or(0.0);
-                (deg_lon.to_radians(), deg_lat.to_radians())
-            }
-            Self::Curvilinear2D { .. } => {
-                let u_c = (px as f32 + 0.5) / w as f32;
-                let v_c = (py as f32 + 0.5) / h as f32;
-                let lon_rad = (u_c - 0.5) * 2.0 * std::f32::consts::PI;
-                let lat_rad = (0.5 - v_c) * std::f32::consts::PI;
-                (lon_rad, lat_rad)
-            }
-            Self::Healpix {
-                nside,
-                ordering,
-                coords_lon,
-                coords_lat,
-                ..
-            } => {
-                if let (Some(lons), Some(lats)) = (coords_lon, coords_lat)
-                    && let (Some(&lon_deg), Some(&lat_deg)) = (lons.get(px), lats.get(px))
-                {
-                    (lon_deg.to_radians(), lat_deg.to_radians())
-                } else {
-                    match ordering {
-                        super::healpix::HealpixOrder::Ring => {
-                            super::healpix::pix2ang_ring(*nside, px)
-                        }
-                        super::healpix::HealpixOrder::Nested => {
-                            super::healpix::pix2ang_nest(*nside, px)
-                        }
-                    }
-                }
-            }
-        }
+        GridTopology::cell_center_lon_lat_rad(self, px, py, width, height)
     }
 
-    /// Computes the 3D surface model space `(world_x, world_z)` coordinates for the center of cell `(px, py)` matching `surface.wgsl`.
-    pub fn cell_center_surface_xz(
+    #[inline]
+    pub fn cell_center_norm(
         &self,
         px: usize,
         py: usize,
         width: usize,
         height: usize,
-        data_aspect: f32,
     ) -> (f32, f32) {
+        GridTopology::cell_center_norm(self, px, py, width, height)
+    }
+
+    #[inline]
+    pub fn spatial_rank(&self) -> usize {
+        GridTopology::spatial_rank(self)
+    }
+
+    #[inline]
+    pub fn supported_plot_types(&self) -> &'static [PlotType] {
+        GridTopology::supported_plot_types(self)
+    }
+
+    #[inline]
+    pub fn data_aspect_ratio(&self, width: usize, height: usize) -> f32 {
+        GridTopology::data_aspect_ratio(self, width, height)
+    }
+
+    #[inline]
+    pub fn same_geometry(&self, other: &Self) -> bool {
+        super::same_geometry::is_same_geometry(self, other)
+    }
+
+    pub fn coords_x(&self) -> Option<&[f32]> {
         match self {
-            Self::Healpix {
-                nside, ordering, ..
-            } => {
-                let (lon_rad, lat_rad) = match ordering {
-                    super::healpix::HealpixOrder::Ring => super::healpix::pix2ang_ring(*nside, px),
-                    super::healpix::HealpixOrder::Nested => {
-                        super::healpix::pix2ang_nest(*nside, px)
-                    }
-                };
-                let u_c = lon_rad / (2.0 * std::f32::consts::PI);
-                let v_c = 0.5 - (lat_rad / std::f32::consts::PI);
-                let world_x = (2.0 * u_c - 1.0) * data_aspect;
-                let world_z = 2.0 * v_c - 1.0;
-                (world_x, world_z)
-            }
-            _ => {
-                let (u_c, v_c) = self.cell_center_norm(px, py, width, height);
-                let world_x = (2.0 * u_c - 1.0) * data_aspect;
-                let world_z = 2.0 * v_c - 1.0;
-                (world_x, world_z)
-            }
+            Self::Irregular1D { coords_x, .. } => Some(coords_x),
+            _ => None,
         }
     }
 
-    /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays.
+    pub fn coords_y(&self) -> Option<&[f32]> {
+        match self {
+            Self::Irregular1D { coords_y, .. } => Some(coords_y),
+            _ => None,
+        }
+    }
+
+    pub fn find_cell_from_norm(
+        &self,
+        norm_x: f32,
+        norm_y: f32,
+        width: usize,
+        height: usize,
+    ) -> (usize, usize) {
+        self.norm_to_cell(norm_x, norm_y, width, height)
+    }
+
+    pub fn find_cell_from_surface_uv(
+        &self,
+        u: f32,
+        v: f32,
+        width: usize,
+        height: usize,
+    ) -> (usize, usize) {
+        self.surface_uv_to_cell(u, v, width, height)
+    }
+
+    pub fn find_cell_from_lon_lat_rad(
+        &self,
+        lon_rad: f32,
+        lat_rad: f32,
+        width: usize,
+        height: usize,
+    ) -> Option<(usize, usize)> {
+        self.lon_lat_to_cell(lon_rad, lat_rad, width, height)
+    }
+
     pub fn detect_grid(
         x_name: &str,
         y_name: &str,
@@ -595,7 +213,6 @@ impl CoordinateGrid {
         super::detection::detect_grid(x_name, y_name, x_coords, y_coords, width, height)
     }
 
-    /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays and OctantBlock metadata.
     pub fn detect_grid_from_block(
         block: &crate::data::OctantBlock,
         x_name: &str,

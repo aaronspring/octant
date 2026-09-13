@@ -1,3 +1,17 @@
+/// Spatial layout and dimension structure of sliced matrix data.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SpatialLayout {
+    /// Regular / Curvilinear 2D tensor of dimensions width x height
+    Structured2D { width: usize, height: usize },
+    /// Discrete global grid (HEALPix, ICON, MPAS) consisting of discrete cells
+    DiscreteGlobal { num_cells: usize },
+    /// Unstructured triangle / polygon mesh
+    UnstructuredMesh {
+        num_faces: usize,
+        num_vertices: usize,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct MatrixData {
     pub width: usize,
@@ -61,6 +75,24 @@ impl MatrixData {
     pub fn with_grid(mut self, grid: crate::data::CoordinateGrid) -> Self {
         self.grid = grid;
         self
+    }
+
+    /// Returns the spatial layout and dimension structure of this matrix.
+    pub fn layout(&self) -> SpatialLayout {
+        if self.grid.spatial_rank() == 1 {
+            SpatialLayout::DiscreteGlobal {
+                num_cells: if self.height == 1 {
+                    self.width
+                } else {
+                    self.width * self.height
+                },
+            }
+        } else {
+            SpatialLayout::Structured2D {
+                width: self.width,
+                height: self.height,
+            }
+        }
     }
 
     /// Generates a random 2D scalar field for visualization
