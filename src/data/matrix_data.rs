@@ -136,7 +136,7 @@ impl MatrixData {
         }
 
         if unique.len() >= 2 {
-            unique.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            unique.sort_by(f32::total_cmp);
             Some(unique)
         } else {
             None
@@ -157,7 +157,7 @@ impl MatrixData {
         if dim_axis == 0 {
             // Along X (width): extract row at `slice_idx`
             let row = slice_idx.min(self.height.saturating_sub(1));
-            let start = row * self.width;
+            let start = (row * self.width).min(self.values.len());
             let end = (start + self.width).min(self.values.len());
             self.values[start..end].to_vec()
         } else {
