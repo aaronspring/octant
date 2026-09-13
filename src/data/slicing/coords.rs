@@ -34,8 +34,8 @@ pub fn extract_sliced_coords_for_dim(
         }
     } else if full_len > 1 {
         // Fallback for spatial dimensions without explicit coordinate tables
-        let is_spatial_x = crate::utils::coordinates::is_spatial_x_name(&clean);
-        let is_spatial_y = crate::utils::coordinates::is_spatial_y_name(&clean);
+        let is_spatial_x = crate::data::coordinates::naming::is_spatial_x_name(&clean);
+        let is_spatial_y = crate::data::coordinates::naming::is_spatial_y_name(&clean);
 
         if is_spatial_x {
             let t_start = start as f64 / (full_len - 1) as f64;

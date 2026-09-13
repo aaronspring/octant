@@ -9,14 +9,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
+use super::cache::{BlockCache, BlockCacheKey};
 #[cfg(not(target_arch = "wasm32"))]
-use super::block_loader::BlockLoader;
-use super::{
-    block_cache::{BlockCache, BlockCacheKey},
-    block_request::BlockRequest,
-    octant_block::OctantBlock,
-    slice_request::DimensionSelection,
-};
+use super::loader::BlockLoader;
+use super::request::BlockRequest;
+use crate::data::{octant_block::OctantBlock, slice_request::DimensionSelection};
 
 pub struct PrefetchResult {
     pub key: BlockCacheKey,

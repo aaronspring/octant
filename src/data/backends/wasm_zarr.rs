@@ -16,8 +16,7 @@ use zarrs::storage::store::MemoryStore;
 use zarrs::storage::{ReadableStorageTraits, StoreKey, WritableStorageTraits};
 
 use super::zarr_block::fetch_block_with_progress;
-use crate::data::block_request::BlockRequest;
-use crate::data::block_store::{BlockStore, BlockStoreError, ProgressCallback};
+use crate::data::blocks::{BlockRequest, BlockStore, BlockStoreError, ProgressCallback};
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::SliceRequest;
 use crate::data::{DatasetMetadata, VariableInfo};

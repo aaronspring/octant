@@ -471,7 +471,7 @@ fn test_selected_volume_elements_and_limit() {
 
 #[test]
 fn test_prefetcher_abort_and_pending_bytes() {
-    use octant::data::block_prefetch::BlockPrefetcher;
+    use octant::data::BlockPrefetcher;
 
     let mut prefetcher = BlockPrefetcher::new();
     assert_eq!(prefetcher.pending_count(), 0);
@@ -678,7 +678,7 @@ fn test_volume_animation_timeline_progression() {
 #[test]
 fn test_procedural_block_store_inspect_and_fetch() {
     use octant::data::{
-        DimensionSelection, SliceRequest, backends::ProceduralBlockStore, block_store::BlockStore,
+        BlockStore, DimensionSelection, SliceRequest, backends::ProceduralBlockStore,
     };
 
     let store = ProceduralBlockStore::open("procedural://volume4d").unwrap();

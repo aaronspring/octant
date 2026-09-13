@@ -229,7 +229,7 @@ impl eframe::App for OctantApp {
 
         // Overlays anchor relative to the remaining canvas rect
         let canvas_rect = ui.available_rect_before_wrap();
-        crate::ui::variables::show_variables_overlay(self, &ctx, canvas_rect);
+        crate::ui::variables_overlay::show_variables_overlay(self, &ctx, canvas_rect);
         crate::ui::settings::show_settings_window(self, &ctx, canvas_rect);
         crate::ui::variables_panel::show_variable_controls(self, &ctx, canvas_rect);
 

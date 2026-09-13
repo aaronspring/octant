@@ -57,9 +57,9 @@ pub fn detect_healpix_ordering(
         || attributes
             .get("ordering")
             .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
-        || attributes.get("grid_type").is_some_and(|v| {
-            crate::utils::coordinates::contains_ascii_case_insensitive(v, "nested")
-        });
+        || attributes
+            .get("grid_type")
+            .is_some_and(|v| super::naming::contains_ascii_case_insensitive(v, "nested"));
 
     if is_nested {
         super::healpix::HealpixOrder::Nested
@@ -78,17 +78,19 @@ pub fn detect_grid_from_block(
     width: usize,
     height: usize,
 ) -> CoordinateGrid {
-    let is_healpix_x = crate::utils::coordinates::is_healpix_dim_name(x_name);
-    let is_healpix_y = crate::utils::coordinates::is_healpix_dim_name(y_name);
+    let is_healpix_x = super::naming::is_healpix_dim_name(x_name);
+    let is_healpix_y = super::naming::is_healpix_dim_name(y_name);
     let is_healpix_attr = block.attributes.contains_key("healpix_zoom")
         || block.attributes.contains_key("healpix_nest")
         || block.attributes.contains_key("healpix_order")
-        || block.attributes.get("grid_type").is_some_and(|g| {
-            crate::utils::coordinates::contains_ascii_case_insensitive(g, "healpix")
-        })
-        || block.attributes.get("ordering").is_some_and(|g| {
-            crate::utils::coordinates::contains_ascii_case_insensitive(g, "nested")
-        });
+        || block
+            .attributes
+            .get("grid_type")
+            .is_some_and(|g| super::naming::contains_ascii_case_insensitive(g, "healpix"))
+        || block
+            .attributes
+            .get("ordering")
+            .is_some_and(|g| super::naming::contains_ascii_case_insensitive(g, "nested"));
 
     let npix = if height == 1 { width } else { width * height };
     if (is_healpix_x || is_healpix_y || is_healpix_attr)
@@ -130,8 +132,8 @@ pub fn detect_grid(
     width: usize,
     height: usize,
 ) -> CoordinateGrid {
-    let is_healpix_x = crate::utils::coordinates::is_healpix_dim_name(x_name);
-    let is_healpix_y = crate::utils::coordinates::is_healpix_dim_name(y_name);
+    let is_healpix_x = super::naming::is_healpix_dim_name(x_name);
+    let is_healpix_y = super::naming::is_healpix_dim_name(y_name);
 
     if is_healpix_x || is_healpix_y {
         let npix = if height == 1 { width } else { width * height };
@@ -147,8 +149,8 @@ pub fn detect_grid(
         }
     }
 
-    let is_spatial_x = crate::utils::coordinates::is_spatial_x_name(x_name);
-    let is_spatial_y = crate::utils::coordinates::is_spatial_y_name(y_name);
+    let is_spatial_x = super::naming::is_spatial_x_name(x_name);
+    let is_spatial_y = super::naming::is_spatial_y_name(y_name);
 
     let Some(xc) = x_coords else {
         return CoordinateGrid::GlobalRegular;

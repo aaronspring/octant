@@ -1,5 +1,4 @@
 pub mod colormap;
-pub mod coordinates;
 pub mod diagnostics;
 pub mod error;
 pub mod executor;
@@ -14,12 +13,12 @@ pub use path::{expand_tilde, expand_tilde_str, infer_store_kind_from_target};
 pub use remote::{ParsedStorageUrl, parse_remote_storage_url};
 
 // Format-agnostic & domain re-exports
+pub use crate::data::backends::coord_bounds::{
+    fetch_all_dimension_coordinates, fetch_all_dimension_coordinates_for_variables,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::data::backends::icechunk_storage::build_sync_icechunk_store;
 pub use crate::data::backends::zarr_storage::build_sync_store;
-pub use coordinates::{
-    fetch_all_dimension_coordinates, fetch_all_dimension_coordinates_for_variables,
-};
 pub use error::OctantError;
 pub use executor::TaskExecutor;
 #[cfg(not(target_arch = "wasm32"))]

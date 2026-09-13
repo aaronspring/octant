@@ -4,8 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::data::{
-    block_request::BlockResult,
-    block_store::{BlockStore, BlockStoreError},
+    blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback},
     octant_block::OctantBlock,
     slice_request::SliceRequest,
 };
@@ -215,7 +214,7 @@ impl BlockStore for GenericZarrBlockStore {
     fn fetch_block_with_progress(
         &self,
         request: &SliceRequest,
-        on_progress: crate::data::block_store::ProgressCallback,
+        on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         let (array, cache) = self.get_or_open_array(&request.variable)?;
         super::zarr_block::fetch_block_from_cached_array(

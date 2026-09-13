@@ -4,6 +4,7 @@ pub mod detection;
 pub mod healpix;
 mod impl_topology;
 pub mod lut;
+pub mod naming;
 pub mod same_geometry;
 pub mod search;
 #[cfg(test)]
@@ -18,6 +19,10 @@ pub use healpix::{
     pix2ring,
 };
 pub use lut::{build_1d_coord_lut, compute_coord_lut_size};
+pub use naming::{
+    contains_ascii_case_insensitive, format_dimension_axis_title, is_animated_time_name,
+    is_healpix_dim_name, is_spatial_x_name, is_spatial_y_name, is_spatial_z_name,
+};
 pub use same_geometry::is_same_geometry;
 pub use search::find_coord_cell_1d;
 pub use topologies::{

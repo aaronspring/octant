@@ -1,5 +1,5 @@
 use crate::data::DataCalibration;
-use crate::data::block_store::BlockStoreError;
+use crate::data::blocks::BlockStoreError;
 use zarrs::array::chunk_cache::{ChunkCache, ChunkCacheDecodedLruSizeLimit};
 use zarrs::array::data_type::*;
 use zarrs::array::{Array, ArraySubset, CodecOptions, DataType, FromArrayBytes};

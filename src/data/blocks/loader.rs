@@ -7,12 +7,10 @@
 
 use std::collections::HashMap;
 
-use super::{
-    block_cache::BlockCacheKey,
-    block_request::{BlockRequest, BlockRequestBatch},
-    block_store::BlockStoreError,
-    octant_block::OctantBlock,
-};
+use super::cache::BlockCacheKey;
+use super::request::{BlockRequest, BlockRequestBatch};
+use super::store::BlockStoreError;
+use crate::data::octant_block::OctantBlock;
 
 /// Outcome of loading a single requested block. Keyed so results from a
 /// batch can be matched back up to their cache key regardless of
@@ -49,7 +47,7 @@ impl BlockLoader {
     /// Loads a single block through its own store, reporting progressive bytes downloaded.
     pub fn load_one_with_progress(
         request: &BlockRequest,
-        on_progress: crate::data::block_store::ProgressCallback,
+        on_progress: super::store::ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         request
             .store

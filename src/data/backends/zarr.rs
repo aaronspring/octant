@@ -2,8 +2,7 @@
 
 use super::{generic_zarr::GenericZarrBlockStore, zarr_storage};
 use crate::data::{
-    block_request::BlockResult,
-    block_store::{BlockStore, BlockStoreError},
+    blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback},
     octant_block::OctantBlock,
     slice_request::SliceRequest,
 };
@@ -57,7 +56,7 @@ impl BlockStore for ZarrBlockStore {
     fn fetch_block_with_progress(
         &self,
         request: &SliceRequest,
-        on_progress: crate::data::block_store::ProgressCallback,
+        on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         self.inner.fetch_block_with_progress(request, on_progress)
     }

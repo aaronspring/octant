@@ -1,0 +1,200 @@
+use crate::app::OctantApp;
+use crate::data::{CoordinateGrid, DatasetMetadata, MatrixData, VariableInfo};
+use crate::ui::hover::enrich::{
+    enrich_entries_with_animated_and_collapsed_dims, get_dimension_origin_and_full_len,
+};
+use crate::ui::hover::format::format_dimension_coord;
+use std::collections::HashSet;
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_2d_plot_entries(
+    app: &OctantApp,
+    matrix: &MatrixData,
+    meta: Option<&DatasetMetadata>,
+    var: Option<&VariableInfo>,
+    norm_x: f32,
+    norm_y: f32,
+    geo_coords: Option<(f32, f32)>,
+) -> (f32, Vec<String>, usize, usize) {
+    let (orig_w, orig_h) = if let Some(pyr) = &app.active_pyramid {
+        (pyr.original_width, pyr.original_height)
+    } else {
+        (matrix.width, matrix.height)
+    };
+    let (px, py) = matrix
+        .grid
+        .find_cell_from_norm(norm_x, norm_y, orig_w, orig_h);
+
+    let val = if let Some(pyr) = &app.active_pyramid
+        && let Some(base_lvl) = pyr.levels.first()
+    {
+        let idx = py * orig_w + px;
+        base_lvl.values.get(idx).copied().unwrap_or(f32::NAN)
+    } else {
+        let idx = py * matrix.width + px;
+        matrix.values.get(idx).copied().unwrap_or(f32::NAN)
+    };
+
+    let mut used_dims = HashSet::new();
+    let entries = resolve_2d_dim_entries(
+        app,
+        meta,
+        var,
+        px,
+        py,
+        orig_w,
+        orig_h,
+        geo_coords,
+        &mut used_dims,
+    );
+
+    (val, entries, px, py)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_2d_dim_entries(
+    app: &OctantApp,
+    meta: Option<&DatasetMetadata>,
+    var: Option<&VariableInfo>,
+    px: usize,
+    py: usize,
+    orig_w: usize,
+    orig_h: usize,
+    geo_coords: Option<(f32, f32)>,
+    used_dims: &mut HashSet<usize>,
+) -> Vec<String> {
+    if let CoordinateGrid::Healpix { nside, .. } = &app
+        .matrix_data
+        .as_ref()
+        .map(|m| &m.grid)
+        .unwrap_or(&CoordinateGrid::GlobalRegular)
+    {
+        return resolve_healpix_dim_entries(
+            app, meta, var, px, py, orig_w, orig_h, *nside, used_dims,
+        );
+    }
+
+    if let Some(v) = var {
+        let (explicit_x, explicit_y, _) =
+            v.resolve_spatial_dim_indices(if !app.plotted_dim_config.is_empty() {
+                &app.plotted_dim_config
+            } else {
+                &app.dim_config
+            });
+
+        let x_idx = explicit_x.unwrap_or(v.dimension_names.len().saturating_sub(1));
+        let y_idx = explicit_y.unwrap_or(v.dimension_names.len().saturating_sub(2));
+
+        used_dims.insert(x_idx);
+        used_dims.insert(y_idx);
+
+        let dim_y_name = explicit_y
+            .and_then(|i| v.dimension_names.get(i))
+            .cloned()
+            .unwrap_or_else(|| "y".to_string());
+
+        let dim_x_name = explicit_x
+            .and_then(|i| v.dimension_names.get(i))
+            .cloned()
+            .unwrap_or_else(|| "x".to_string());
+
+        let geo_y = geo_coords.map(|(lat, _)| lat);
+        let geo_x = geo_coords.map(|(_, lon)| lon);
+
+        let (origin_x, full_x_len) = get_dimension_origin_and_full_len(app, Some(v), x_idx);
+        let (origin_y, full_y_len) = get_dimension_origin_and_full_len(app, Some(v), y_idx);
+
+        let global_x = (origin_x + px).min(full_x_len.saturating_sub(1));
+        let global_y = (origin_y + py).min(full_y_len.saturating_sub(1));
+
+        let loc_y = format_dimension_coord(
+            meta,
+            Some(v),
+            Some(&app.plotted_store_target_input),
+            &dim_y_name,
+            global_y,
+            full_y_len,
+            geo_y,
+        );
+        let loc_x = format_dimension_coord(
+            meta,
+            Some(v),
+            Some(&app.plotted_store_target_input),
+            &dim_x_name,
+            global_x,
+            full_x_len,
+            geo_x,
+        );
+
+        let mut list = vec![loc_y, loc_x];
+        enrich_entries_with_animated_and_collapsed_dims(app, meta, Some(v), &mut list, used_dims);
+
+        list
+    } else {
+        vec![
+            format!("y:\u{00A0}{}/{}", py + 1, orig_h),
+            format!("x:\u{00A0}{}/{}", px + 1, orig_w),
+        ]
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_healpix_dim_entries(
+    app: &OctantApp,
+    meta: Option<&DatasetMetadata>,
+    var: Option<&VariableInfo>,
+    px: usize,
+    py: usize,
+    orig_w: usize,
+    orig_h: usize,
+    nside: usize,
+    used_dims: &mut HashSet<usize>,
+) -> Vec<String> {
+    let (ring, _) = crate::data::coordinates::healpix::pix2ring(nside, px);
+    let (cell_lon_rad, cell_lat_rad) = app
+        .matrix_data
+        .as_ref()
+        .map(|m| m.grid.cell_center_lon_lat_rad(px, py, orig_w, orig_h))
+        .unwrap_or((0.0, 0.0));
+    let lat_deg = cell_lat_rad.to_degrees();
+    let lon_deg = cell_lon_rad.to_degrees();
+
+    let lat_str = if lat_deg >= 0.0 {
+        format!("lat:\u{00A0}{:.2}°N", lat_deg)
+    } else {
+        format!("lat:\u{00A0}{:.2}°S", -lat_deg)
+    };
+    let lon_str = {
+        let lon_norm = ((lon_deg % 360.0) + 360.0) % 360.0;
+        if lon_norm <= 180.0 {
+            format!("lon:\u{00A0}{:.2}°E", lon_norm)
+        } else {
+            format!("lon:\u{00A0}{:.2}°W", 360.0 - lon_norm)
+        }
+    };
+    let healpix_str = format!(
+        "cell:\u{00A0}#{}\u{00A0}(Ring\u{00A0}#{}, Nside={})",
+        px, ring, nside
+    );
+
+    let mut list = vec![healpix_str, lat_str, lon_str];
+    if let Some(v) = var {
+        let (explicit_x, _, _) =
+            v.resolve_spatial_dim_indices(if !app.plotted_dim_config.is_empty() {
+                &app.plotted_dim_config
+            } else {
+                &app.dim_config
+            });
+        if let Some(x_idx) = explicit_x {
+            used_dims.insert(x_idx);
+        } else if let Some(cell_idx) = v
+            .dimension_names
+            .iter()
+            .position(|d| crate::data::coordinates::naming::is_healpix_dim_name(d))
+        {
+            used_dims.insert(cell_idx);
+        }
+        enrich_entries_with_animated_and_collapsed_dims(app, meta, Some(v), &mut list, used_dims);
+    }
+    list
+}

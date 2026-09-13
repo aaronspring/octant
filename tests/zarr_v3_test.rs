@@ -1,5 +1,5 @@
+use octant::data::BlockStore;
 use octant::data::backends::zarr::ZarrBlockStore;
-use octant::data::block_store::BlockStore;
 use octant::data::slice_request::{DimensionSelection, SliceRequest};
 use std::sync::Arc;
 use zarrs::array::{ArrayBuilder, ArraySubset, FillValue};
