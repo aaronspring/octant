@@ -5,6 +5,7 @@ use std::sync::mpsc::Sender;
 
 use super::types::{Aligned4, CoastlineBuffer, CoastlineLod};
 
+#[cfg(not(target_arch = "wasm32"))]
 const REPO_URL: &str = "https://raw.githubusercontent.com/lazarusA/octant/main/assets/coastlines";
 
 /// 110m coastline vertices statically embedded at compile time (41 KB).

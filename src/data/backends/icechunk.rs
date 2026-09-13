@@ -95,7 +95,7 @@ impl BlockStore for IcechunkBlockStore {
     fn fetch_block_with_progress(
         &self,
         _request: &SliceRequest,
-        _on_progress: crate::data::block_store::ProgressCallback,
+        _on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         Err("Icechunk is not supported on web".into())
     }

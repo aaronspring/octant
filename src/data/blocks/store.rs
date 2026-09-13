@@ -87,18 +87,18 @@ pub trait BlockStore {
     fn variables(&self) -> Result<Vec<String>, BlockStoreError>;
 
     /// Inspect variables and metadata from this dataset source.
-    fn inspect(&self) -> Result<super::metadata::DatasetMetadata, BlockStoreError> {
+    fn inspect(&self) -> Result<crate::data::metadata::DatasetMetadata, BlockStoreError> {
         let vars = self.variables()?;
         let var_infos = vars
             .into_iter()
-            .map(|name| super::metadata::VariableInfo {
+            .map(|name| crate::data::metadata::VariableInfo {
                 name,
                 data_type: "float32".to_string(),
                 ..Default::default()
             })
             .collect();
 
-        Ok(super::metadata::DatasetMetadata {
+        Ok(crate::data::metadata::DatasetMetadata {
             name: self.backend_name().to_string(),
             store_type: self.backend_name().to_string(),
             variables: var_infos,
