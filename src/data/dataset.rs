@@ -4,7 +4,7 @@
 //! completely different sources to be displayed together.
 
 use super::{
-    block_request::BlockRequest,
+    blocks::BlockRequest,
     data_source::DataSource,
     slice_request::{DimensionSelection, SliceRequest},
     store_handle::StoreHandle,

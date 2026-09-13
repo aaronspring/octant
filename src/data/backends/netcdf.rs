@@ -11,8 +11,7 @@ mod desktop {
     use netcdf::types::{FloatType, IntType, NcVariableType};
     use netcdf::{AttributeValue, Extent, Extents};
 
-    use crate::data::block_request::BlockResult;
-    use crate::data::block_store::{BlockStore, BlockStoreError};
+    use crate::data::blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback};
     use crate::data::metadata::{DatasetMetadata, VariableInfo};
     use crate::data::octant_block::OctantBlock;
     use crate::data::slice_request::SliceRequest;
@@ -280,9 +279,9 @@ mod desktop {
                 }
 
                 let is_coord_var = dims[0].name() == name
-                    || crate::utils::coordinates::is_spatial_x_name(&clean)
-                    || crate::utils::coordinates::is_spatial_y_name(&clean)
-                    || crate::utils::coordinates::is_spatial_z_name(&clean)
+                    || crate::data::coordinates::naming::is_spatial_x_name(&clean)
+                    || crate::data::coordinates::naming::is_spatial_y_name(&clean)
+                    || crate::data::coordinates::naming::is_spatial_z_name(&clean)
                     || clean == "time"
                     || clean == "depth"
                     || clean == "lev"
@@ -522,7 +521,7 @@ mod desktop {
         fn fetch_block_with_progress(
             &self,
             request: &SliceRequest,
-            mut on_progress: crate::data::block_store::ProgressCallback,
+            mut on_progress: ProgressCallback,
         ) -> Result<OctantBlock, BlockStoreError> {
             let file = netcdf::open(&self.file_path)
                 .map_err(|e| format!("Failed to open NetCDF file '{}': {e}", self.file_path))?;
@@ -656,8 +655,7 @@ pub use desktop::NetCdfBlockStore;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use crate::data::block_request::BlockResult;
-    use crate::data::block_store::{BlockStore, BlockStoreError};
+    use crate::data::blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback};
     use crate::data::metadata::DatasetMetadata;
     use crate::data::octant_block::OctantBlock;
     use crate::data::slice_request::SliceRequest;
@@ -687,7 +685,7 @@ mod wasm {
         fn fetch_block_with_progress(
             &self,
             _request: &SliceRequest,
-            _on_progress: crate::data::block_store::ProgressCallback,
+            _on_progress: ProgressCallback,
         ) -> Result<OctantBlock, BlockStoreError> {
             Err("NetCDF is not supported on WASM".into())
         }
@@ -705,13 +703,17 @@ pub use wasm::NetCdfBlockStore;
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
     use super::*;
-    use crate::data::block_store::BlockStore;
+    use crate::data::blocks::BlockStore;
     use crate::data::slice_request::SliceRequest;
 
     #[test]
     fn test_create_and_read_netcdf() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join("octant_test_data.nc");
+        let test_file = temp_dir.join(format!(
+            "octant_test_data_{}_{:?}.nc",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let path_str = test_file.to_str().unwrap().to_string();
 
         // Create a test NetCDF file
@@ -797,7 +799,11 @@ mod tests {
     #[test]
     fn test_netcdf_scale_offset_and_fill() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join("octant_test_scale_fill.nc");
+        let test_file = temp_dir.join(format!(
+            "octant_test_scale_fill_{}_{:?}.nc",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let path_str = test_file.to_str().unwrap().to_string();
 
         {
@@ -835,7 +841,11 @@ mod tests {
     #[test]
     fn test_netcdf_1d_variable_loading() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join("octant_test_1d_var.nc");
+        let test_file = temp_dir.join(format!(
+            "octant_test_1d_var_{}_{:?}.nc",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let path_str = test_file.to_str().unwrap().to_string();
 
         {

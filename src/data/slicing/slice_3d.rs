@@ -28,19 +28,17 @@ fn is_full_contiguous_3d(
     eff_nz: usize,
 ) -> bool {
     block.rank() == 3
-        && x_dim == 0
-        && y_dim == 1
-        && z_dim == 2
+        && z_dim < block.rank()
         && x_start == 0
-        && nx == block.shape[0]
+        && nx == block.shape[x_dim]
         && y_start == 0
-        && ny == block.shape[1]
+        && ny == block.shape[y_dim]
         && z_start == 0
-        && nz == block.shape[2]
-        && block.strides[0] == block.shape[1] * block.shape[2]
-        && block.strides[1] == block.shape[2]
-        && block.strides[2] == 1
+        && nz == block.shape[z_dim]
         && nz == eff_nz
+        && block.strides[x_dim] == 1
+        && block.strides[y_dim] == nx
+        && block.strides[z_dim] == nx * ny
 }
 
 /// Copies voxels when rows in X are contiguous (stride_x == 1).

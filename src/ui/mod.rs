@@ -19,5 +19,7 @@ pub mod settings;
 pub mod status;
 pub mod store;
 pub mod top_bar;
-pub mod variables;
+pub mod variables_overlay;
 pub mod variables_panel;
+
+pub use variables_overlay::show_variables_overlay;

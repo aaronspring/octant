@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::{
-    block_store::{BlockStore, BlockStoreError},
+    blocks::{BlockStore, BlockStoreError},
     data_source::{DataSource, DataSourceKind},
     store_handle::StoreHandle,
 };

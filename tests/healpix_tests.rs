@@ -1,5 +1,5 @@
+use octant::data::BlockStore;
 use octant::data::backends::procedural::ProceduralBlockStore;
-use octant::data::block_store::BlockStore;
 use octant::data::coordinates::healpix::*;
 use octant::data::slice_request::{DimensionSelection, SliceRequest};
 

@@ -6,8 +6,7 @@
 use std::sync::Arc;
 
 use super::{
-    block_request::BlockResult,
-    block_store::{BlockStore, BlockStoreError},
+    blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback},
     data_source::DataSource,
     octant_block::OctantBlock,
     slice_request::SliceRequest,
@@ -51,7 +50,7 @@ impl StoreHandle {
     pub fn fetch_with_progress(
         &self,
         request: &SliceRequest,
-        on_progress: super::block_store::ProgressCallback,
+        on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         self.backend.fetch_block_with_progress(request, on_progress)
     }

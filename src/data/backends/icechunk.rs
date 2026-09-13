@@ -5,9 +5,9 @@ use super::generic_zarr::GenericZarrBlockStore;
 #[cfg(not(target_arch = "wasm32"))]
 use super::icechunk_storage::build_sync_icechunk_store;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::data::block_request::BlockResult;
+use crate::data::blocks::BlockResult;
 use crate::data::{
-    block_store::{BlockStore, BlockStoreError},
+    blocks::{BlockStore, BlockStoreError, ProgressCallback},
     octant_block::OctantBlock,
     slice_request::SliceRequest,
 };
@@ -59,7 +59,7 @@ impl BlockStore for IcechunkBlockStore {
     fn fetch_block_with_progress(
         &self,
         request: &SliceRequest,
-        on_progress: crate::data::block_store::ProgressCallback,
+        on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         self.inner.fetch_block_with_progress(request, on_progress)
     }
@@ -95,7 +95,7 @@ impl BlockStore for IcechunkBlockStore {
     fn fetch_block_with_progress(
         &self,
         _request: &SliceRequest,
-        _on_progress: crate::data::block_store::ProgressCallback,
+        _on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         Err("Icechunk is not supported on web".into())
     }

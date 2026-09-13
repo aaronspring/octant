@@ -1,7 +1,6 @@
 use octant::data::{
-    SliceRequest,
+    BlockStore, SliceRequest,
     backends::NetCdfBlockStore,
-    block_store::BlockStore,
     coordinates::CoordinateGrid,
     procedural::{
         generate_clenshaw_curtis_2d, generate_clenshaw_curtis_coords, generate_gaussian_coords,
@@ -11,6 +10,9 @@ use octant::data::{
     },
 };
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+static NETCDF_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn get_test_data_dir() -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -22,6 +24,7 @@ fn get_test_data_dir() -> PathBuf {
 
 #[test]
 fn test_generate_and_load_ground_truth_clenshaw_netcdf() {
+    let _guard = NETCDF_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = get_test_data_dir();
     let file_path = dir.join("ground_truth_clenshaw.nc");
     let (nx, ny) = (64, 32);
@@ -85,6 +88,7 @@ fn test_generate_and_load_ground_truth_clenshaw_netcdf() {
 
 #[test]
 fn test_generate_and_load_ground_truth_gaussian_netcdf() {
+    let _guard = NETCDF_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = get_test_data_dir();
     let file_path = dir.join("ground_truth_gaussian.nc");
     let (nx, ny) = (64, 32);
@@ -148,6 +152,7 @@ fn test_generate_and_load_ground_truth_gaussian_netcdf() {
 
 #[test]
 fn test_generate_and_load_ground_truth_stretched_regional_netcdf() {
+    let _guard = NETCDF_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = get_test_data_dir();
     let file_path = dir.join("ground_truth_stretched.nc");
     let (nx, ny) = (48, 32);
@@ -216,6 +221,7 @@ fn test_generate_and_load_ground_truth_stretched_regional_netcdf() {
 
 #[test]
 fn test_generate_and_load_ground_truth_stepped_netcdf() {
+    let _guard = NETCDF_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = get_test_data_dir();
     let file_path = dir.join("ground_truth_stepped.nc");
     let (nx, ny) = (64, 32);

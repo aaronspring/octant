@@ -295,7 +295,7 @@ impl VariableInfo {
             .or_else(|| {
                 self.dimension_names
                     .iter()
-                    .rposition(|d| crate::utils::coordinates::is_spatial_x_name(d))
+                    .rposition(|d| crate::data::coordinates::naming::is_spatial_x_name(d))
             });
 
         let explicit_y = (0..self.dimension_names.len())
@@ -307,7 +307,7 @@ impl VariableInfo {
             .or_else(|| {
                 self.dimension_names
                     .iter()
-                    .rposition(|d| crate::utils::coordinates::is_spatial_y_name(d))
+                    .rposition(|d| crate::data::coordinates::naming::is_spatial_y_name(d))
             });
 
         let explicit_z = (0..self.dimension_names.len())
@@ -319,7 +319,7 @@ impl VariableInfo {
             .or_else(|| {
                 self.dimension_names
                     .iter()
-                    .rposition(|d| crate::utils::coordinates::is_spatial_z_name(d))
+                    .rposition(|d| crate::data::coordinates::naming::is_spatial_z_name(d))
             });
 
         (explicit_x, explicit_y, explicit_z)

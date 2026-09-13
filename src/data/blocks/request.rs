@@ -11,11 +11,9 @@
 //!   backend -- a batch can freely mix variables from many datasets, each
 //!   opened against a different store.
 
-use super::{
-    block_cache::{BlockCache, BlockCacheKey},
-    octant_block::OctantBlock,
-    slice_request::SliceRequest,
-    store_handle::StoreHandle,
+use super::cache::{BlockCache, BlockCacheKey};
+use crate::data::{
+    octant_block::OctantBlock, slice_request::SliceRequest, store_handle::StoreHandle,
 };
 
 #[derive(Clone)]

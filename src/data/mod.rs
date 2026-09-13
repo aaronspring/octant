@@ -1,9 +1,5 @@
 pub mod backends;
-pub mod block_cache;
-pub mod block_loader;
-pub mod block_prefetch;
-pub mod block_request;
-pub mod block_store;
+pub mod blocks;
 pub mod calibration;
 pub mod codecs;
 pub mod coordinates;
@@ -23,19 +19,21 @@ pub mod source_factory;
 pub mod store_handle;
 pub mod volume_data;
 
+pub use blocks::{
+    BlockBatchOutcome, BlockCache, BlockCacheKey, BlockLoadOutcome, BlockLoader, BlockPrefetcher,
+    BlockRequest, BlockRequestBatch, BlockResult, BlockStore, BlockStoreError, PrefetchResult,
+    ProgressCallback, VariableCacheSummary,
+};
 pub use calibration::DataCalibration;
-pub use metadata::{DatasetMetadata, VariableInfo, VariableTreeGroup};
-
-pub use block_cache::{BlockCache, BlockCacheKey};
-pub use block_loader::{BlockBatchOutcome, BlockLoadOutcome, BlockLoader};
-pub use block_prefetch::{BlockPrefetcher, PrefetchResult};
-pub use block_request::{BlockRequest, BlockRequestBatch, BlockResult};
-pub use block_store::{BlockStore, BlockStoreError};
-pub use coordinates::CoordinateGrid;
+pub use coordinates::{
+    CartesianTopology, CoordinateGrid, CurvilinearTopology, GridTopology, HealpixTopology,
+    Irregular1DTopology,
+};
 pub use data_source::{DataSource, DataSourceKind};
 pub use dataset::Dataset;
 pub use dataset_manager::DatasetManager;
-pub use matrix_data::MatrixData;
+pub use matrix_data::{MatrixData, SpatialLayout};
+pub use metadata::{DatasetMetadata, VariableInfo, VariableTreeGroup};
 pub use octant_block::OctantBlock;
 pub use procedural::{
     KnownTruth4DParams, eval_known_truth_4d, generate_known_truth_4d_block,

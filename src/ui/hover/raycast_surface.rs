@@ -27,10 +27,7 @@ pub fn raycast_surface(
     hover_pos: Pos2,
 ) -> Option<(f32, f32, Option<(f32, f32)>)> {
     let (_, world_ray) = camera.cast_ray(hover_pos);
-    let data_aspect = match &matrix.grid {
-        crate::data::CoordinateGrid::Healpix { .. } => 2.0,
-        _ => (matrix.width as f32 / matrix.height.max(1) as f32).max(0.1),
-    };
+    let data_aspect = matrix.grid.data_aspect_ratio(matrix.width, matrix.height);
 
     if world_ray.dir[1].abs() < 1e-5 {
         return None;
@@ -110,10 +107,7 @@ pub fn surface_target_pos(
     py: usize,
     raw_val: f32,
 ) -> Option<Pos2> {
-    let data_aspect = match &matrix.grid {
-        crate::data::CoordinateGrid::Healpix { .. } => 2.0,
-        _ => (matrix.width as f32 / matrix.height.max(1) as f32).max(0.1),
-    };
+    let data_aspect = matrix.grid.data_aspect_ratio(matrix.width, matrix.height);
     let height = get_normalized_surface_height(app, raw_val);
     let world_y = if app.surface_mode == 2 {
         height.max(0.0) // Lego cube top face

@@ -6,12 +6,12 @@ use zarrs::array::ArraySubset;
 use zarrs::array::chunk_cache::ChunkCacheDecodedLruSizeLimit;
 use zarrs::storage::ReadableWritableListableStorage;
 
+use super::coord_bounds::get_cached_coord_bounds_scoped;
 use super::generic_zarr::ZarrArrayHandle;
 use super::zarr_slice::retrieve_array_subset_as_f32;
-use crate::data::block_store::BlockStoreError;
+use crate::data::blocks::{BlockStoreError, ProgressCallback};
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::{DimensionSelection, SliceRequest};
-use crate::utils::coordinates::get_cached_coord_bounds_scoped;
 use crate::utils::grid::check_and_orient_block_grid;
 
 /// Fetches an arbitrary-rank hyperslab described by `request` and returns it
@@ -31,7 +31,7 @@ pub fn fetch_block_from_cached_array(
     store: ReadableWritableListableStorage,
     store_url: &str,
     request: &SliceRequest,
-    mut on_progress: crate::data::block_store::ProgressCallback,
+    mut on_progress: ProgressCallback,
 ) -> Result<OctantBlock, BlockStoreError> {
     let shape = array.shape();
     let rank = shape.len();
@@ -151,12 +151,12 @@ pub fn fetch_block_from_cached_array(
                 usize::MAX,
                 total_dims,
             ) {
-                let is_x = crate::utils::coordinates::is_spatial_x_name(candidate);
+                let is_x = crate::data::coordinates::naming::is_spatial_x_name(candidate);
                 let dim_i = dim_names.iter().position(|d| {
                     if is_x {
-                        crate::utils::coordinates::is_spatial_x_name(d)
+                        crate::data::coordinates::naming::is_spatial_x_name(d)
                     } else {
-                        crate::utils::coordinates::is_spatial_y_name(d)
+                        crate::data::coordinates::naming::is_spatial_y_name(d)
                     }
                 });
                 if let Some(i) = dim_i {
@@ -209,7 +209,7 @@ pub fn fetch_block_with_progress(
     store: ReadableWritableListableStorage,
     store_url: &str,
     request: &SliceRequest,
-    on_progress: crate::data::block_store::ProgressCallback,
+    on_progress: ProgressCallback,
 ) -> Result<OctantBlock, BlockStoreError> {
     let dummy_store =
         super::generic_zarr::GenericZarrBlockStore::new(store.clone(), store_url, "zarr", "Zarr");

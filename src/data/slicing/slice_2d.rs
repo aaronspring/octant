@@ -1,200 +1,14 @@
+//! 2D hyperslab slicing for MatrixData representations.
+
 use crate::data::CoordinateGrid;
 use crate::data::matrix_data::MatrixData;
 use crate::data::octant_block::OctantBlock;
 use crate::data::slicing::common::{clamp_slice_range, compute_fixed_dims_offset, resolve_min_max};
 use crate::data::slicing::coords::extract_sliced_coords_for_dim;
-
-/// Extracts a 1D slice representation formatted as MatrixData (width x 1).
-fn slice_1d(
-    block: &OctantBlock,
-    x_dim: usize,
-    x_range: (usize, usize),
-    fixed_indices: Option<&[usize]>,
-    max_timesteps: usize,
-    dataset_name: &str,
-    compute_bounds: bool,
-) -> Option<MatrixData> {
-    if x_dim >= block.rank() {
-        return None;
-    }
-    let full_x = block.shape.get(x_dim).copied().unwrap_or(1);
-    let (x_start, x_end, width) = clamp_slice_range(x_range, full_x);
-    if width == 0 {
-        return None;
-    }
-
-    let stride_x = block.strides.get(x_dim).copied().unwrap_or(1);
-    let base_offset = if let Some(fixed) = fixed_indices {
-        compute_fixed_dims_offset(fixed, &block.shape, &block.strides, x_dim, x_dim, None)
-    } else {
-        0
-    };
-
-    let values: Vec<f32> = if stride_x == 1 {
-        let start = base_offset + x_start;
-        let end = base_offset + x_end;
-        if end <= block.values.len() {
-            block.values[start..end].to_vec()
-        } else {
-            (x_start..x_end)
-                .map(|x| {
-                    block
-                        .values
-                        .get(base_offset + x * stride_x)
-                        .copied()
-                        .unwrap_or(f32::NAN)
-                })
-                .collect()
-        }
-    } else {
-        (x_start..x_end)
-            .map(|x| {
-                block
-                    .values
-                    .get(base_offset + x * stride_x)
-                    .copied()
-                    .unwrap_or(f32::NAN)
-            })
-            .collect()
-    };
-
-    let (min_val, max_val) =
-        resolve_min_max(compute_bounds, &values, block.min_value, block.max_value);
-    let x_name = block
-        .dimension_names
-        .get(x_dim)
-        .map(|s| s.as_str())
-        .unwrap_or("x");
-    let x_coords = extract_sliced_coords_for_dim(
-        &block.coordinates,
-        &block.dimension_names,
-        &block.shape,
-        x_dim,
-        (x_start, x_end),
-    );
-    let grid = CoordinateGrid::detect_grid_from_block(
-        block,
-        x_name,
-        "y",
-        x_coords.as_deref(),
-        None,
-        width,
-        1,
-    );
-
-    Some(MatrixData::new_with_grid(
-        width,
-        1,
-        values,
-        min_val,
-        max_val,
-        dataset_name.to_string(),
-        max_timesteps,
-        grid,
-    ))
-}
-
-/// Extracts a scalar (0D) slice formatted as 1x1 MatrixData.
-fn slice_0d(block: &OctantBlock, max_timesteps: usize, dataset_name: &str) -> Option<MatrixData> {
-    let val = block.values.first().copied().unwrap_or(0.0);
-    Some(MatrixData::new(
-        1,
-        1,
-        vec![val],
-        val,
-        val,
-        dataset_name.to_string(),
-        max_timesteps,
-    ))
-}
-
-/// Copies values for contiguous row and column slices.
-fn copy_contiguous_slice(
-    values: &[f32],
-    base_offset: usize,
-    y_start: usize,
-    y_end: usize,
-    stride_y: usize,
-    width: usize,
-) -> Vec<f32> {
-    let slice_len = width * (y_end - y_start);
-    let slice_start = base_offset + y_start * stride_y;
-    let slice_end = slice_start + slice_len;
-
-    if slice_end <= values.len() {
-        values[slice_start..slice_end].to_vec()
-    } else {
-        let mut result = Vec::with_capacity(slice_len);
-        for y in y_start..y_end {
-            let row_start = base_offset + y * stride_y;
-            let row_end = row_start + width;
-            if row_end <= values.len() {
-                result.extend_from_slice(&values[row_start..row_end]);
-            } else {
-                for x in 0..width {
-                    result.push(values.get(row_start + x).copied().unwrap_or(f32::NAN));
-                }
-            }
-        }
-        result
-    }
-}
-
-/// Copies values when rows are contiguous in X (stride_x == 1).
-#[allow(clippy::too_many_arguments)]
-fn copy_row_contiguous_slice(
-    values: &[f32],
-    base_offset: usize,
-    y_start: usize,
-    y_end: usize,
-    stride_y: usize,
-    x_start: usize,
-    width: usize,
-) -> Vec<f32> {
-    let slice_len = width * (y_end - y_start);
-    let mut result = Vec::with_capacity(slice_len);
-
-    for y in y_start..y_end {
-        let row_start = base_offset + y * stride_y + x_start;
-        let row_end = row_start + width;
-        if row_end <= values.len() {
-            result.extend_from_slice(&values[row_start..row_end]);
-        } else {
-            for x in 0..width {
-                result.push(values.get(row_start + x).copied().unwrap_or(f32::NAN));
-            }
-        }
-    }
-
-    result
-}
-
-/// Copies values for arbitrary strided X and Y slices.
-#[allow(clippy::too_many_arguments)]
-fn copy_strided_slice(
-    values: &[f32],
-    base_offset: usize,
-    y_start: usize,
-    y_end: usize,
-    stride_y: usize,
-    x_start: usize,
-    x_end: usize,
-    stride_x: usize,
-) -> Vec<f32> {
-    let width = x_end.saturating_sub(x_start);
-    let height = y_end.saturating_sub(y_start);
-    let mut result = Vec::with_capacity(width * height);
-
-    for y in y_start..y_end {
-        let row_start = base_offset + y * stride_y;
-        for x in x_start..x_end {
-            let idx = row_start + x * stride_x;
-            result.push(values.get(idx).copied().unwrap_or(f32::NAN));
-        }
-    }
-
-    result
-}
+use crate::data::slicing::copy::{
+    copy_contiguous_slice, copy_row_contiguous_slice, copy_strided_slice,
+};
+use crate::data::slicing::slice_1d::{slice_0d, slice_1d};
 
 /// Slices a 2D matrix from an OctantBlock given X/Y dimension indices and fixed indices.
 #[allow(clippy::too_many_arguments)]
@@ -242,7 +56,6 @@ pub fn slice_2d_with_ranges(
 
     let full_x = block.shape[x_dim];
     let full_y = block.shape[y_dim];
-
     let (x_start, x_end, width) = clamp_slice_range(x_range, full_x);
     let (y_start, y_end, height) = clamp_slice_range(y_range, full_y);
 

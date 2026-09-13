@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use crate::data::{
-    block_request::BlockResult,
-    block_store::{BlockStore, BlockStoreError},
+    blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback},
     metadata::{DatasetMetadata, VariableInfo},
     octant_block::OctantBlock,
     procedural::{
@@ -34,7 +33,7 @@ fn slice_2d_grid_block(
     full_data: &[f32],
     coords: (&[f64], &[f64]),
     request: &SliceRequest,
-    on_progress: &mut crate::data::block_store::ProgressCallback,
+    on_progress: &mut ProgressCallback,
 ) -> OctantBlock {
     let (w_full, h_full) = shape;
     let (xs, ys) = coords;
@@ -468,7 +467,7 @@ impl BlockStore for ProceduralBlockStore {
     fn fetch_block_with_progress(
         &self,
         request: &SliceRequest,
-        mut on_progress: crate::data::block_store::ProgressCallback,
+        mut on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         if self.uri.contains("healpix") {
             let nside = 16;
