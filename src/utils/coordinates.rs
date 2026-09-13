@@ -339,7 +339,7 @@ pub fn read_coord_bounds_scoped(
 
 /// Fast zero-allocation case-insensitive ASCII substring search.
 #[inline]
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+pub fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }

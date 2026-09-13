@@ -575,4 +575,19 @@ impl CoordinateGrid {
     ) -> Self {
         super::detection::detect_grid(x_name, y_name, x_coords, y_coords, width, height)
     }
+
+    /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays and OctantBlock metadata.
+    pub fn detect_grid_from_block(
+        block: &crate::data::OctantBlock,
+        x_name: &str,
+        y_name: &str,
+        x_coords: Option<&[f64]>,
+        y_coords: Option<&[f64]>,
+        width: usize,
+        height: usize,
+    ) -> Self {
+        super::detection::detect_grid_from_block(
+            block, x_name, y_name, x_coords, y_coords, width, height,
+        )
+    }
 }

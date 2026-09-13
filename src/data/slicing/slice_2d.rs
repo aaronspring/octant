@@ -1,62 +1,8 @@
-use std::sync::Arc;
-
 use crate::data::CoordinateGrid;
 use crate::data::matrix_data::MatrixData;
 use crate::data::octant_block::OctantBlock;
 use crate::data::slicing::common::{clamp_slice_range, compute_fixed_dims_offset, resolve_min_max};
 use crate::data::slicing::coords::extract_sliced_coords_for_dim;
-
-fn attach_healpix_metadata(mut grid: CoordinateGrid, block: &OctantBlock) -> CoordinateGrid {
-    if let CoordinateGrid::Healpix {
-        nside,
-        mut ordering,
-        npix,
-        ..
-    } = grid
-    {
-        let is_nested = block
-            .attributes
-            .get("healpix_nest")
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-            .unwrap_or(false)
-            || block
-                .attributes
-                .get("healpix_order")
-                .map(|v| v.eq_ignore_ascii_case("nested"))
-                .unwrap_or(false)
-            || block
-                .attributes
-                .get("ordering")
-                .map(|v| v.eq_ignore_ascii_case("nested"))
-                .unwrap_or(false)
-            || block
-                .attributes
-                .get("grid_type")
-                .map(|v| v.to_ascii_lowercase().contains("nested"))
-                .unwrap_or(false);
-
-        if is_nested {
-            ordering = crate::data::coordinates::HealpixOrder::Nested;
-        }
-
-        let coords_lon = block.coordinates.get("lon").map(|l| {
-            let slice: Arc<[f32]> = l.iter().map(|&v| v as f32).collect();
-            slice
-        });
-        let coords_lat = block.coordinates.get("lat").map(|l| {
-            let slice: Arc<[f32]> = l.iter().map(|&v| v as f32).collect();
-            slice
-        });
-        grid = CoordinateGrid::Healpix {
-            nside,
-            ordering,
-            npix,
-            coords_lon,
-            coords_lat,
-        };
-    }
-    grid
-}
 
 /// Extracts a 1D slice representation formatted as MatrixData (width x 1).
 fn slice_1d(
@@ -94,8 +40,15 @@ fn slice_1d(
         0,
         (x_start, x_end),
     );
-    let grid = CoordinateGrid::detect_grid(x_name, "y", x_coords.as_deref(), None, width, 1);
-    let grid = attach_healpix_metadata(grid, block);
+    let grid = CoordinateGrid::detect_grid_from_block(
+        block,
+        x_name,
+        "y",
+        x_coords.as_deref(),
+        None,
+        width,
+        1,
+    );
 
     Some(MatrixData::new_with_grid(
         width,
@@ -294,8 +247,15 @@ pub fn slice_2d_with_ranges(
             x_dim,
             (x_start, x_end),
         );
-        let grid = CoordinateGrid::detect_grid(x_name, "y", x_coords.as_deref(), None, width, 1);
-        let grid = attach_healpix_metadata(grid, block);
+        let grid = CoordinateGrid::detect_grid_from_block(
+            block,
+            x_name,
+            "y",
+            x_coords.as_deref(),
+            None,
+            width,
+            1,
+        );
 
         return Some(MatrixData::new_with_grid(
             width,
@@ -383,7 +343,8 @@ pub fn slice_2d_with_ranges(
         (y_start, y_end),
     );
 
-    let grid = CoordinateGrid::detect_grid(
+    let grid = CoordinateGrid::detect_grid_from_block(
+        block,
         x_name,
         y_name,
         x_coords.as_deref(),
@@ -391,7 +352,6 @@ pub fn slice_2d_with_ranges(
         width,
         height,
     );
-    let grid = attach_healpix_metadata(grid, block);
 
     Some(MatrixData::new_with_grid(
         width,

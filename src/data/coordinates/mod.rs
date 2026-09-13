@@ -6,7 +6,7 @@ pub mod lut;
 pub mod search;
 pub mod types;
 
-pub use detection::detect_grid;
+pub use detection::{detect_grid, detect_grid_from_block};
 pub use healpix::{
     HealpixOrder, ang2pix_ring, npix_to_nside, nside_to_npix, pix_boundaries, pix2ang_ring,
     pix2ring,

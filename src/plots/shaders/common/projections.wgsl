@@ -14,6 +14,32 @@ fn lon_lat_to_cartesian(radius: f32, lon: f32, lat: f32) -> vec3<f32> {
 const JRLL = array<i32, 12>(2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4);
 const JPLL = array<i32, 12>(1, 3, 5, 7, 0, 2, 4, 6, 1, 3, 5, 7);
 
+fn morton_compact_bits(v_in: u32) -> u32 {
+    var v = v_in & 0x55555555u;
+    v = (v ^ (v >> 1u)) & 0x33333333u;
+    v = (v ^ (v >> 2u)) & 0x0F0F0F0Fu;
+    v = (v ^ (v >> 4u)) & 0x00FF00FFu;
+    v = (v ^ (v >> 8u)) & 0x0000FFFFu;
+    return v;
+}
+
+fn morton_spread_bits(v_in: u32) -> u32 {
+    var v = v_in & 0x0000FFFFu;
+    v = (v ^ (v << 8u)) & 0x00FF00FFu;
+    v = (v ^ (v << 4u)) & 0x0F0F0F0Fu;
+    v = (v ^ (v << 2u)) & 0x33333333u;
+    v = (v ^ (v << 1u)) & 0x55555555u;
+    return v;
+}
+
+fn morton_deinterleave2(code: u32) -> vec2<u32> {
+    return vec2<u32>(morton_compact_bits(code), morton_compact_bits(code >> 1u));
+}
+
+fn morton_interleave2(ix: u32, iy: u32) -> u32 {
+    return morton_spread_bits(ix) | (morton_spread_bits(iy) << 1u);
+}
+
 fn healpix_nest2ring(nside: u32, pix_nest: u32) -> u32 {
     let npix = 12u * nside * nside;
     if (nside <= 1u) {
@@ -24,12 +50,9 @@ fn healpix_nest2ring(nside: u32, pix_nest: u32) -> u32 {
     let face = min(p_nest / nside_sq, 11u);
     let in_face = p_nest % nside_sq;
 
-    var ix = 0u;
-    var iy = 0u;
-    for (var b = 0u; b < 16u; b = b + 1u) {
-        ix = ix | (((in_face >> (2u * b)) & 1u) << b);
-        iy = iy | (((in_face >> (2u * b + 1u)) & 1u) << b);
-    }
+    let coords = morton_deinterleave2(in_face);
+    let ix = coords.x;
+    let iy = coords.y;
 
     let nside_i = i32(nside);
     let nl4 = 4 * nside_i;
@@ -146,13 +169,7 @@ fn healpix_ring2nest(nside: u32, pix_ring: u32) -> u32 {
         }
 
         if (ix_isize >= 0 && ix_isize < nside_i && iy_isize >= 0 && iy_isize < nside_i) {
-            let ix = u32(ix_isize);
-            let iy = u32(iy_isize);
-            var in_face = 0u;
-            for (var b = 0u; b < 16u; b = b + 1u) {
-                in_face = in_face | (((ix >> b) & 1u) << (2u * b));
-                in_face = in_face | (((iy >> b) & 1u) << (2u * b + 1u));
-            }
+            let in_face = morton_interleave2(u32(ix_isize), u32(iy_isize));
             return face * (nside * nside) + in_face;
         }
     }
@@ -290,16 +307,62 @@ fn healpix_pixel_uv_to_lon_lat(pix: u32, uv: vec2<f32>, nside: u32, is_nested: b
     let face = min(p_nest / nside_sq, 11u);
     let in_face = p_nest % nside_sq;
 
-    var ix = 0u;
-    var iy = 0u;
-    for (var b = 0u; b < 16u; b = b + 1u) {
-        ix = ix | (((in_face >> (2u * b)) & 1u) << b);
-        iy = iy | (((in_face >> (2u * b + 1u)) & 1u) << b);
+    let coords = morton_deinterleave2(in_face);
+    let x = f32(coords.x) + uv.x;
+    let y = f32(coords.y) + uv.y;
+    return healpix_face_xy_to_lon_lat(face, x, y, ns);
+}
+
+/// Evaluates smoothly interpolated corner values across HEALPix cell boundaries for continuous terrain
+fn healpix_get_interpolated_corner_val(
+    pix: u32,
+    corner_uv: vec2<f32>,
+    nside: u32,
+    is_nested: bool,
+    max_idx: u32,
+) -> f32 {
+    let ns = max(nside, 1u);
+    var p_nest = pix;
+    if (!is_nested) {
+        p_nest = healpix_ring2nest(ns, pix);
+    }
+    let nside_sq = ns * ns;
+    let face = min(p_nest / nside_sq, 11u);
+    let in_face = p_nest % nside_sq;
+
+    let coords = morton_deinterleave2(in_face);
+    let cx = coords.x + u32(round(corner_uv.x));
+    let cy = coords.y + u32(round(corner_uv.y));
+
+    var sum: f32 = 0.0;
+    var count: f32 = 0.0;
+
+    let offsets_x = array<i32, 4>(-1, 0, -1, 0);
+    let offsets_y = array<i32, 4>(-1, -1, 0, 0);
+
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let px_cand = i32(cx) + offsets_x[k];
+        let py_cand = i32(cy) + offsets_y[k];
+
+        if (px_cand >= 0 && px_cand < i32(ns) && py_cand >= 0 && py_cand < i32(ns)) {
+            let cand_in_face = morton_interleave2(u32(px_cand), u32(py_cand));
+            var cand_pix = face * nside_sq + cand_in_face;
+            if (!is_nested) {
+                cand_pix = healpix_nest2ring(ns, cand_pix);
+            }
+            let safe_cand = min(cand_pix, max_idx);
+            let v = data_buffer[safe_cand];
+            if (v == v && abs(v) < 1e30) {
+                sum = sum + v;
+                count = count + 1.0;
+            }
+        }
     }
 
-    let x = f32(ix) + uv.x;
-    let y = f32(iy) + uv.y;
-    return healpix_face_xy_to_lon_lat(face, x, y, ns);
+    if (count > 0.0) {
+        return sum / count;
+    }
+    return data_buffer[min(pix, max_idx)];
 }
 
 fn get_lon_lat(

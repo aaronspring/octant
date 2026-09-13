@@ -43,6 +43,80 @@ pub fn is_irregular_series(coords: &[f64]) -> bool {
     delta_variation > 0.0005 // > 0.05% variation is considered irregular (e.g. Gaussian grids, Clenshaw-Curtis)
 }
 
+/// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays and OctantBlock metadata.
+pub fn detect_grid_from_block(
+    block: &crate::data::OctantBlock,
+    x_name: &str,
+    y_name: &str,
+    x_coords: Option<&[f64]>,
+    y_coords: Option<&[f64]>,
+    width: usize,
+    height: usize,
+) -> CoordinateGrid {
+    let is_healpix_x = crate::utils::coordinates::is_healpix_dim_name(x_name);
+    let is_healpix_y = crate::utils::coordinates::is_healpix_dim_name(y_name);
+    let is_healpix_attr = block.attributes.contains_key("healpix_zoom")
+        || block.attributes.contains_key("healpix_nest")
+        || block.attributes.contains_key("healpix_order")
+        || block.attributes.get("grid_type").is_some_and(|g| {
+            crate::utils::coordinates::contains_ascii_case_insensitive(g, "healpix")
+        })
+        || block.attributes.get("ordering").is_some_and(|g| {
+            crate::utils::coordinates::contains_ascii_case_insensitive(g, "nested")
+        });
+
+    let npix = if height == 1 { width } else { width * height };
+    if (is_healpix_x || is_healpix_y || is_healpix_attr)
+        && let Some(nside) = super::healpix::npix_to_nside(npix)
+    {
+        let is_nested = block
+            .attributes
+            .get("healpix_nest")
+            .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            || block
+                .attributes
+                .get("healpix_order")
+                .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
+            || block
+                .attributes
+                .get("ordering")
+                .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
+            || block
+                .attributes
+                .get("grid_type")
+                .is_some_and(|v| v.to_ascii_lowercase().contains("nested"));
+
+        let ordering = if is_nested {
+            super::healpix::HealpixOrder::Nested
+        } else {
+            super::healpix::HealpixOrder::Ring
+        };
+
+        let coords_lon = block.coordinates.get("lon").map(|l| {
+            let slice: Arc<[f32]> = l.iter().map(|&v| v as f32).collect();
+            slice
+        });
+        let coords_lat = block.coordinates.get("lat").map(|l| {
+            let slice: Arc<[f32]> = l.iter().map(|&v| v as f32).collect();
+            slice
+        });
+
+        log::info!(
+            "CoordinateGrid: Detected HEALPix grid from block (nside={nside}, ordering={:?}, npix={npix})",
+            ordering
+        );
+        return CoordinateGrid::Healpix {
+            nside,
+            ordering,
+            npix,
+            coords_lon,
+            coords_lat,
+        };
+    }
+
+    detect_grid(x_name, y_name, x_coords, y_coords, width, height)
+}
+
 /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays.
 pub fn detect_grid(
     x_name: &str,
