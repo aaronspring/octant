@@ -473,13 +473,18 @@ impl BlockStore for ProceduralBlockStore {
         if self.uri.contains("healpix") {
             let nside = 16;
             let npix = 3072;
-            let mut lons_f64 = Vec::with_capacity(npix);
-            let mut lats_f64 = Vec::with_capacity(npix);
-            for p in 0..npix {
-                let (lon_rad, lat_rad) = crate::data::coordinates::healpix::pix2ang_ring(nside, p);
-                lons_f64.push(lon_rad.to_degrees() as f64);
-                lats_f64.push(lat_rad.to_degrees() as f64);
-            }
+            let angles: Vec<(f32, f32)> = (0..npix)
+                .map(|p| crate::data::coordinates::healpix::pix2ang_ring(nside, p))
+                .collect();
+
+            let lons_f64: Vec<f64> = angles
+                .iter()
+                .map(|&(lon, _)| lon.to_degrees() as f64)
+                .collect();
+            let lats_f64: Vec<f64> = angles
+                .iter()
+                .map(|&(_, lat)| lat.to_degrees() as f64)
+                .collect();
 
             let mut coords_map = HashMap::new();
             coords_map.insert("lon".to_string(), lons_f64);
@@ -497,36 +502,22 @@ impl BlockStore for ProceduralBlockStore {
             };
 
             let values: Vec<f32> = match request.variable.as_str() {
-                "lat" => (0..npix)
-                    .map(|p| {
-                        let (_, lat_rad) =
-                            crate::data::coordinates::healpix::pix2ang_ring(nside, p);
-                        lat_rad.to_degrees()
-                    })
-                    .collect(),
-                "lon" => (0..npix)
-                    .map(|p| {
-                        let (lon_rad, _) =
-                            crate::data::coordinates::healpix::pix2ang_ring(nside, p);
-                        lon_rad.to_degrees()
-                    })
-                    .collect(),
+                "lat" => angles.iter().map(|&(_, lat)| lat.to_degrees()).collect(),
+                "lon" => angles.iter().map(|&(lon, _)| lon.to_degrees()).collect(),
                 "ring" => (0..npix)
                     .map(|p| crate::data::coordinates::healpix::pix2ring(nside, p).0 as f32)
                     .collect(),
-                "mslp" => (0..npix)
-                    .map(|p| {
-                        let (lon_rad, lat_rad) =
-                            crate::data::coordinates::healpix::pix2ang_ring(nside, p);
+                "mslp" => angles
+                    .iter()
+                    .map(|&(lon_rad, lat_rad)| {
                         let phase = t_idx as f32 * 0.3;
                         1013.25 + 25.0 * (4.0 * lon_rad - phase).cos() * lat_rad.cos().powi(2)
                             - 15.0 * lat_rad.sin()
                     })
                     .collect(),
-                _ => (0..npix)
-                    .map(|p| {
-                        let (lon_rad, lat_rad) =
-                            crate::data::coordinates::healpix::pix2ang_ring(nside, p);
+                _ => angles
+                    .iter()
+                    .map(|&(lon_rad, lat_rad)| {
                         let phase = t_idx as f32 * 0.3;
                         let alt_decay = layer_idx as f32 * 6.5;
                         285.0 + 35.0 * lat_rad.cos() - 15.0 * lat_rad.sin().powi(2)

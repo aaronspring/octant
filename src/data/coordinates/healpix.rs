@@ -92,7 +92,6 @@ pub fn pix2ang_ring(nside: usize, pix: usize) -> (f32, f32) {
         // South Polar Cap (rings 3 * nside + 1 .. 4 * nside - 1)
         let p_south = (npix - 1).saturating_sub(p);
         let r_south = (((1.0 + (1.0 + 2.0 * p_south as f64).sqrt()) * 0.5).floor() as usize).max(1);
-        let _r = 4 * nside - r_south;
         let p_ring_start = npix - 2 * r_south * (r_south + 1);
         let i = p.saturating_sub(p_ring_start);
 
@@ -294,24 +293,10 @@ pub fn ring2nest(nside: usize, pix_ring: usize) -> usize {
     let p_ring = pix_ring.min(npix.saturating_sub(1));
     let nside_i = nside as isize;
     let nl4 = 4 * nside_i;
-    let ncap = 2 * nside * (nside - 1);
 
-    let (jr, ip) = if p_ring < ncap {
-        let r = (((1.0 + (1.0 + 2.0 * p_ring as f64).sqrt()) * 0.5).floor() as isize).max(1);
-        let p_start = 2 * (r as usize) * ((r - 1) as usize);
-        (r, (p_ring - p_start + 1) as isize)
-    } else if p_ring < npix - ncap {
-        let p_eq = p_ring - ncap;
-        let r_eq = (p_eq / (4 * nside)) as isize;
-        let r = nside_i + r_eq;
-        (r, (p_eq % (4 * nside) + 1) as isize)
-    } else {
-        let p_south = (npix - 1).saturating_sub(p_ring);
-        let r_south = (((1.0 + (1.0 + 2.0 * p_south as f64).sqrt()) * 0.5).floor() as isize).max(1);
-        let r = 4 * nside_i - r_south;
-        let p_start = npix - 2 * (r_south as usize) * ((r_south + 1) as usize);
-        (r, (p_ring - p_start + 1) as isize)
-    };
+    let (r, i) = pix2ring(nside, p_ring);
+    let jr = r as isize;
+    let ip = (i + 1) as isize;
 
     for face in 0..12 {
         let (ix_isize, iy_isize) = if jr < nside_i {

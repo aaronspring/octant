@@ -262,9 +262,30 @@ fn healpix_ang2pix_ring(nside: u32, lon_rad: f32, lat_rad: f32) -> u32 {
     }
 }
 
+struct HealpixFaceCoords {
+    face: u32,
+    x: u32,
+    y: u32,
+}
+
+fn healpix_pixel_to_face_coords(pix: u32, nside: u32, is_nested: bool) -> HealpixFaceCoords {
+    let ns = max(nside, 1u);
+    var p_nest = pix;
+    if (!is_nested) {
+        p_nest = healpix_ring2nest(ns, pix);
+    }
+    let nside_sq = ns * ns;
+    let face = min(p_nest / nside_sq, 11u);
+    let in_face = p_nest % nside_sq;
+    let coords = morton_deinterleave2(in_face);
+    return HealpixFaceCoords(face, coords.x, coords.y);
+}
+
 /// Continuous transformation from base face diamond (x, y) coordinates to spherical (lon, lat)
 fn healpix_face_xy_to_lon_lat(face: u32, x: f32, y: f32, nside: u32) -> vec2<f32> {
     let nside_f = f32(max(nside, 1u));
+    let inv_nside = 1.0 / nside_f;
+    let inv_3_nside_sq = 1.0 / (3.0 * nside_f * nside_f);
     let jr = f32(JRLL[face]) * nside_f - x - y;
     let pi = 3.14159265;
     let two_pi = 6.2831853;
@@ -276,18 +297,18 @@ fn healpix_face_xy_to_lon_lat(face: u32, x: f32, y: f32, nside: u32) -> vec2<f32
         // North Polar Cap
         let nr = max(jr, 1e-6);
         let jp = (f32(JPLL[face]) * nr + x - y) * 0.5;
-        z = 1.0 - (nr * nr) / (3.0 * nside_f * nside_f);
+        z = 1.0 - (nr * nr) * inv_3_nside_sq;
         lon = jp * (pi / (2.0 * nr));
     } else if (jr <= 3.0 * nside_f) {
         // Equatorial Belt
         let jp = (f32(JPLL[face]) * nside_f + x - y) * 0.5;
-        z = (2.0 / 3.0) * (2.0 - jr / nside_f);
-        lon = jp * (pi / (2.0 * nside_f));
+        z = (2.0 / 3.0) * (2.0 - jr * inv_nside);
+        lon = jp * (pi * 0.5 * inv_nside);
     } else {
         // South Polar Cap
         let nr = max(4.0 * nside_f - jr, 1e-6);
         let jp = (f32(JPLL[face]) * nr + x - y) * 0.5;
-        z = -(1.0 - (nr * nr) / (3.0 * nside_f * nside_f));
+        z = -(1.0 - (nr * nr) * inv_3_nside_sq);
         lon = jp * (pi / (2.0 * nr));
     }
 
@@ -298,19 +319,10 @@ fn healpix_face_xy_to_lon_lat(face: u32, x: f32, y: f32, nside: u32) -> vec2<f32
 
 /// Evaluates continuous (lon, lat) at normalized diamond coordinates uv within a HEALPix cell
 fn healpix_pixel_uv_to_lon_lat(pix: u32, uv: vec2<f32>, nside: u32, is_nested: bool) -> vec2<f32> {
-    let ns = max(nside, 1u);
-    var p_nest = pix;
-    if (!is_nested) {
-        p_nest = healpix_ring2nest(ns, pix);
-    }
-    let nside_sq = ns * ns;
-    let face = min(p_nest / nside_sq, 11u);
-    let in_face = p_nest % nside_sq;
-
-    let coords = morton_deinterleave2(in_face);
-    let x = f32(coords.x) + uv.x;
-    let y = f32(coords.y) + uv.y;
-    return healpix_face_xy_to_lon_lat(face, x, y, ns);
+    let fc = healpix_pixel_to_face_coords(pix, nside, is_nested);
+    let x = f32(fc.x) + uv.x;
+    let y = f32(fc.y) + uv.y;
+    return healpix_face_xy_to_lon_lat(fc.face, x, y, nside);
 }
 
 /// Evaluates smoothly interpolated corner values across HEALPix cell boundaries for continuous terrain
@@ -322,17 +334,10 @@ fn healpix_get_interpolated_corner_val(
     max_idx: u32,
 ) -> f32 {
     let ns = max(nside, 1u);
-    var p_nest = pix;
-    if (!is_nested) {
-        p_nest = healpix_ring2nest(ns, pix);
-    }
+    let fc = healpix_pixel_to_face_coords(pix, ns, is_nested);
     let nside_sq = ns * ns;
-    let face = min(p_nest / nside_sq, 11u);
-    let in_face = p_nest % nside_sq;
-
-    let coords = morton_deinterleave2(in_face);
-    let cx = coords.x + u32(round(corner_uv.x));
-    let cy = coords.y + u32(round(corner_uv.y));
+    let cx = fc.x + u32(round(corner_uv.x));
+    let cy = fc.y + u32(round(corner_uv.y));
 
     var sum: f32 = 0.0;
     var count: f32 = 0.0;
@@ -346,7 +351,7 @@ fn healpix_get_interpolated_corner_val(
 
         if (px_cand >= 0 && px_cand < i32(ns) && py_cand >= 0 && py_cand < i32(ns)) {
             let cand_in_face = morton_interleave2(u32(px_cand), u32(py_cand));
-            var cand_pix = face * nside_sq + cand_in_face;
+            var cand_pix = fc.face * nside_sq + cand_in_face;
             if (!is_nested) {
                 cand_pix = healpix_nest2ring(ns, cand_pix);
             }

@@ -176,6 +176,10 @@ fn vs_main(
 
     var world_pos: vec3<f32>;
     var min_dist: f32 = 0.1;
+    var data_aspect = max(f32(max(coastline_uniforms.width, 1u)) / f32(max(coastline_uniforms.height, 1u)), 0.1);
+    if (coastline_uniforms.coord_mode == 4u || coastline_uniforms.coord_mode == 5u) {
+        data_aspect = 2.0;
+    }
 
     if (coastline_uniforms.plot_kind == 1u) {
         // --- Sphere Mode ---
@@ -192,10 +196,6 @@ fn vs_main(
     } else {
         // --- Surface / Block Mode ---
         min_dist = 0.1;
-        var data_aspect = max(f32(max(coastline_uniforms.width, 1u)) / f32(max(coastline_uniforms.height, 1u)), 0.1);
-        if (coastline_uniforms.coord_mode == 4u || coastline_uniforms.coord_mode == 5u) {
-            data_aspect = 2.0;
-        }
         let normalized_x = uv_x;
         let normalized_y = (coastline_uniforms.lat_bounds.y - cur_lat) / lat_span;
         let world_x = -data_aspect + normalized_x * 2.0 * data_aspect;
@@ -225,10 +225,6 @@ fn vs_main(
         if (coastline_uniforms.plot_kind == 1u) {
             other_world_pos = lon_lat_to_cartesian(1.002, other_lon, cur_other_lat);
         } else {
-            var data_aspect = max(f32(max(coastline_uniforms.width, 1u)) / f32(max(coastline_uniforms.height, 1u)), 0.1);
-            if (coastline_uniforms.coord_mode == 4u || coastline_uniforms.coord_mode == 5u) {
-                data_aspect = 2.0;
-            }
             let other_uv_x = select(p1_uv_x, p0_uv_x, !is_p1);
             let other_norm_y = (coastline_uniforms.lat_bounds.y - cur_other_lat) / lat_span;
             let other_x = -data_aspect + other_uv_x * 2.0 * data_aspect;
