@@ -21,9 +21,15 @@ pub fn show_plot_type_menu(app: &mut OctantApp, ui: &mut egui::Ui) {
     } else {
         (false, false, 0.0)
     };
+    let is_discrete_grid = app
+        .dim_config
+        .iter()
+        .any(|c| c.spatial == crate::app::SpatialRole::Grid);
+
     let is_volume_allowed = (is_3d_available || app.volume_data.is_some())
         && is_size_allowed
-        && !app.enable_pyramid_resampling;
+        && !app.enable_pyramid_resampling
+        && !is_discrete_grid;
 
     let total_2d_elements = if let Some(mdata) = &app.matrix_data {
         mdata.width * mdata.height
@@ -125,6 +131,10 @@ pub fn show_plot_type_menu(app: &mut OctantApp, ui: &mut egui::Ui) {
             } else {
                 let reason = if pyramid_disabled {
                     "Disabled: 2D Pyramid Resampling active".to_string()
+                } else if is_discrete_grid
+                    && (plot_type == PlotType::Volume || plot_type == PlotType::PointCloud)
+                {
+                    "Unsupported for HEALPix grid".to_string()
                 } else if (plot_type == PlotType::Volume || plot_type == PlotType::PointCloud)
                     && !is_3d_available
                 {

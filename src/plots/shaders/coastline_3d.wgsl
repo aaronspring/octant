@@ -146,27 +146,40 @@ fn vs_main(
     // Height / displacement sampling from dataset buffer if within domain bounds
     var value = 0.0;
     if (in_bounds) {
-        var cell_x: u32;
-        var cell_y: u32;
-        let sample_lon_deg = select(cur_lon_deg, select(cur_lon_deg, cur_lon_deg + 360.0, cur_lon_deg < 0.0), is_0_to_360);
-        if (coastline_uniforms.coord_mode == 2u) {
-            cell_x = find_coord_cell_x(sample_lon_deg, coastline_uniforms.width);
-            cell_y = find_coord_cell_y(cur_lat_deg, coastline_uniforms.height);
+        if (coastline_uniforms.coord_mode == 4u || coastline_uniforms.coord_mode == 5u) {
+            let nside = healpix_nside(coastline_uniforms.width * coastline_uniforms.height);
+            let pix = healpix_ang2pix(nside, cur_lon, cur_lat, coastline_uniforms.coord_mode == 5u);
+            let data_len = arrayLength(&data_buffer);
+            if (data_len > 0u) {
+                value = data_buffer[min(pix, data_len - 1u)];
+            }
         } else {
-            let norm_y = clamp((coastline_uniforms.lat_bounds.y - cur_lat) / lat_span, 0.0, 1.0);
-            cell_x = min(u32(clamp(uv_x, 0.0, 1.0) * f32(max(coastline_uniforms.width, 1u))), max(coastline_uniforms.width, 1u) - 1u);
-            cell_y = min(u32(norm_y * f32(max(coastline_uniforms.height, 1u))), max(coastline_uniforms.height, 1u) - 1u);
-        }
+            var cell_x: u32;
+            var cell_y: u32;
+            let sample_lon_deg = select(cur_lon_deg, select(cur_lon_deg, cur_lon_deg + 360.0, cur_lon_deg < 0.0), is_0_to_360);
+            if (coastline_uniforms.coord_mode == 2u) {
+                cell_x = find_coord_cell_x(sample_lon_deg, coastline_uniforms.width);
+                cell_y = find_coord_cell_y(cur_lat_deg, coastline_uniforms.height);
+            } else {
+                let norm_y = clamp((coastline_uniforms.lat_bounds.y - cur_lat) / lat_span, 0.0, 1.0);
+                cell_x = min(u32(clamp(uv_x, 0.0, 1.0) * f32(max(coastline_uniforms.width, 1u))), max(coastline_uniforms.width, 1u) - 1u);
+                cell_y = min(u32(norm_y * f32(max(coastline_uniforms.height, 1u))), max(coastline_uniforms.height, 1u) - 1u);
+            }
 
-        let data_len = arrayLength(&data_buffer);
-        if (data_len > 0u) {
-            let data_idx = min(cell_y * max(coastline_uniforms.width, 1u) + cell_x, data_len - 1u);
-            value = data_buffer[data_idx];
+            let data_len = arrayLength(&data_buffer);
+            if (data_len > 0u) {
+                let data_idx = min(cell_y * max(coastline_uniforms.width, 1u) + cell_x, data_len - 1u);
+                value = data_buffer[data_idx];
+            }
         }
     }
 
     var world_pos: vec3<f32>;
     var min_dist: f32 = 0.1;
+    var data_aspect = max(f32(max(coastline_uniforms.width, 1u)) / f32(max(coastline_uniforms.height, 1u)), 0.1);
+    if (coastline_uniforms.coord_mode == 4u || coastline_uniforms.coord_mode == 5u) {
+        data_aspect = 2.0;
+    }
 
     if (coastline_uniforms.plot_kind == 1u) {
         // --- Sphere Mode ---
@@ -183,7 +196,6 @@ fn vs_main(
     } else {
         // --- Surface / Block Mode ---
         min_dist = 0.1;
-        let data_aspect = max(f32(max(coastline_uniforms.width, 1u)) / f32(max(coastline_uniforms.height, 1u)), 0.1);
         let normalized_x = uv_x;
         let normalized_y = (coastline_uniforms.lat_bounds.y - cur_lat) / lat_span;
         let world_x = -data_aspect + normalized_x * 2.0 * data_aspect;
@@ -213,7 +225,6 @@ fn vs_main(
         if (coastline_uniforms.plot_kind == 1u) {
             other_world_pos = lon_lat_to_cartesian(1.002, other_lon, cur_other_lat);
         } else {
-            let data_aspect = max(f32(max(coastline_uniforms.width, 1u)) / f32(max(coastline_uniforms.height, 1u)), 0.1);
             let other_uv_x = select(p1_uv_x, p0_uv_x, !is_p1);
             let other_norm_y = (coastline_uniforms.lat_bounds.y - cur_other_lat) / lat_span;
             let other_x = -data_aspect + other_uv_x * 2.0 * data_aspect;

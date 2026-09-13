@@ -76,6 +76,187 @@ pub fn apply_zoom_pan_at_point(
     (new_zoom, new_pan)
 }
 
+/// Computes the maximum steps along the animated dimension that fit within GPU limits.
+pub fn calculate_max_animated_steps(
+    shape: &[u64],
+    active_dims: &[bool],
+    selected_ranges: &[(usize, usize)],
+    anim_dim: usize,
+    max_gpu_elements: usize,
+) -> (usize, usize, usize) {
+    let rank = shape.len();
+    if anim_dim >= rank {
+        return (1, 1, 1);
+    }
+
+    let mut spatial_elements_per_step: usize = 1;
+    for (d, &size) in shape.iter().enumerate() {
+        if d == anim_dim {
+            continue;
+        }
+        if active_dims.get(d).copied().unwrap_or(false) {
+            let span = if let Some(&(start, end)) = selected_ranges.get(d) {
+                end.saturating_sub(start) + 1
+            } else {
+                size as usize
+            };
+            spatial_elements_per_step = spatial_elements_per_step.saturating_mul(span.max(1));
+        }
+    }
+    if spatial_elements_per_step == 0 {
+        spatial_elements_per_step = 1;
+    }
+
+    let full_anim_size = shape[anim_dim] as usize;
+    let max_allowed =
+        (max_gpu_elements / spatial_elements_per_step).clamp(1, full_anim_size.max(1));
+
+    let requested = if let Some(&(start, end)) = selected_ranges.get(anim_dim) {
+        end.saturating_sub(start) + 1
+    } else {
+        full_anim_size
+    };
+
+    (max_allowed, requested, spatial_elements_per_step)
+}
+
+/// Calculates requested download bytes and total file size for a variable.
+pub fn calculate_download_sizes(
+    shape: &[u64],
+    file_size: u64,
+    dtype_bytes: u64,
+    active_dims: &[bool],
+    selected_ranges: &[(usize, usize)],
+) -> (u64, u64) {
+    let total_elements: u64 = shape.iter().copied().product::<u64>().max(1);
+    let total_bytes = if file_size > 0 {
+        file_size
+    } else {
+        total_elements.saturating_mul(dtype_bytes)
+    };
+
+    let mut requested_elements: u64 = 1;
+    for (i, &size) in shape.iter().enumerate() {
+        let dim_size = size as usize;
+        if active_dims.get(i).copied().unwrap_or(false) {
+            let span = if let Some(&(start, end)) = selected_ranges.get(i) {
+                (end.saturating_sub(start) + 1).min(dim_size)
+            } else {
+                dim_size
+            };
+            requested_elements = requested_elements.saturating_mul(span.max(1) as u64);
+        }
+    }
+    let requested_bytes = requested_elements.saturating_mul(dtype_bytes);
+
+    (requested_bytes, total_bytes)
+}
+
+/// Calculates the total 3D volume elements from active dimensions.
+pub fn calculate_volume_elements(
+    shape: &[u64],
+    active_dims: &[bool],
+    selected_ranges: &[(usize, usize)],
+) -> usize {
+    let mut total_elements = 1usize;
+    let mut counted = 0;
+    for (i, &size) in shape.iter().enumerate() {
+        let is_active = active_dims.get(i).copied().unwrap_or(false);
+        if is_active {
+            let (start, end) = selected_ranges
+                .get(i)
+                .copied()
+                .unwrap_or((0, (size as usize).saturating_sub(1)));
+            let span = (end.saturating_sub(start) + 1).min(size as usize);
+            total_elements = total_elements.saturating_mul(span.max(1));
+            counted += 1;
+        }
+    }
+    if counted == 0 {
+        shape.iter().copied().product::<u64>() as usize
+    } else {
+        total_elements
+    }
+}
+
+/// Calculates the total 2D plane elements for spatial X and Y dimensions.
+pub fn calculate_2d_elements(
+    shape: &[u64],
+    x_dim: usize,
+    y_dim: usize,
+    selected_ranges: &[(usize, usize)],
+) -> usize {
+    let rank = shape.len();
+    let get_span = |d: usize| -> usize {
+        if d >= rank {
+            return 1;
+        }
+        let size = shape[d] as usize;
+        if let Some(&(start, end)) = selected_ranges.get(d) {
+            (end.saturating_sub(start) + 1).min(size)
+        } else {
+            size
+        }
+    };
+
+    let nx = get_span(x_dim);
+    let ny = if rank <= 1 || x_dim == y_dim {
+        1
+    } else {
+        get_span(y_dim)
+    };
+    nx.saturating_mul(ny)
+}
+
+/// Computes normalized surface height on the 3D surface mesh matching surface.wgsl.
+#[inline]
+pub fn compute_normalized_surface_height(
+    val: f32,
+    cmin: f32,
+    cmax: f32,
+    surface_mode: u32,
+    disp: f32,
+) -> f32 {
+    if !val.is_finite() {
+        return 0.0;
+    }
+    let range = (cmax - cmin).max(1e-6);
+    let mult = match surface_mode {
+        1 => 0.6, // Flat Steps
+        _ => 0.8, // Smooth Terrain (0) and 3D Lego Cubes (2)
+    };
+
+    if cmin < 0.0 && cmax > 0.0 {
+        let max_abs = cmin.abs().max(cmax.abs());
+        (val / max_abs).clamp(-1.0, 1.0) * mult * disp
+    } else {
+        let norm_val = ((val - cmin) / range).clamp(0.0, 1.0);
+        norm_val * mult * disp
+    }
+}
+
+/// Formats tick values cleanly using integer/decimal or concise scientific notation.
+pub fn format_scientific_tick(val: f32) -> String {
+    let abs_val = val.abs();
+    if abs_val == 0.0 {
+        "0".to_string()
+    } else if !(0.001..10000.0).contains(&abs_val) {
+        let s = format!("{:.2e}", val);
+        if let Some((mantissa, exponent)) = s.split_once('e') {
+            let clean_mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
+            format!("{}e{}", clean_mantissa, exponent)
+        } else {
+            s
+        }
+    } else if (val.fract()).abs() < 1e-5 {
+        format!("{:.0}", val)
+    } else if (val * 10.0).fract().abs() < 1e-5 {
+        format!("{:.1}", val)
+    } else {
+        format!("{:.2}", val)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +322,33 @@ mod tests {
         let vz = xorshift64_f32(&mut zero_seed);
         assert!((0.0..1.0).contains(&vz));
         assert_ne!(zero_seed, 0);
+    }
+
+    #[test]
+    fn test_compute_normalized_surface_height() {
+        let h_mid = compute_normalized_surface_height(50.0, 0.0, 100.0, 0, 1.0);
+        assert!((h_mid - 0.4).abs() < 1e-4);
+
+        let h_nan = compute_normalized_surface_height(f32::NAN, 0.0, 100.0, 0, 1.0);
+        assert_eq!(h_nan, 0.0);
+    }
+
+    #[test]
+    fn test_format_scientific_tick() {
+        assert_eq!(format_scientific_tick(0.0), "0");
+        assert_eq!(format_scientific_tick(15.0), "15");
+        assert_eq!(format_scientific_tick(0.000045), "4.5e-5");
+    }
+
+    #[test]
+    fn test_calculate_volume_and_2d_elements() {
+        let shape = vec![10, 32, 64];
+        let active = vec![true, true, true];
+        let ranges = vec![(0, 9), (0, 31), (0, 63)];
+        assert_eq!(
+            calculate_volume_elements(&shape, &active, &ranges),
+            10 * 32 * 64
+        );
+        assert_eq!(calculate_2d_elements(&shape, 2, 1, &ranges), 64 * 32);
     }
 }

@@ -29,80 +29,141 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
     }
 
     if rank == 1 {
-        app.dim_config[0].spatial = SpatialRole::X;
+        let dim_name = var_info
+            .dimension_names
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        let is_grid = crate::utils::coordinates::is_healpix_dim_name(dim_name);
+        app.dim_config[0].spatial = if is_grid {
+            SpatialRole::Grid
+        } else {
+            SpatialRole::X
+        };
         app.dim_config[0].active = true;
         app.dim_config[0].range = app.selected_dim_ranges[0];
         app.spatial_dims.push(0);
         return;
     }
 
-    let mut x_assigned = false;
-    let mut y_assigned = false;
-    let mut z_assigned = false;
-    let mut anim_assigned = false;
-
-    // 1. Match explicit named coordinate patterns
-    for i in 0..rank {
-        let dim_name = var_info
+    // Check if this variable has a discrete global grid / HEALPix dimension
+    let healpix_dim_idx = (0..rank).find(|&i| {
+        let name = var_info
             .dimension_names
             .get(i)
             .map(|s| s.as_str())
             .unwrap_or("");
+        crate::utils::coordinates::is_healpix_dim_name(name)
+    });
 
-        if !x_assigned && crate::utils::coordinates::is_spatial_x_name(dim_name) {
-            app.dim_config[i].spatial = SpatialRole::X;
-            x_assigned = true;
-        } else if !y_assigned && crate::utils::coordinates::is_spatial_y_name(dim_name) {
-            app.dim_config[i].spatial = SpatialRole::Y;
-            y_assigned = true;
-        } else if !z_assigned && crate::utils::coordinates::is_spatial_z_name(dim_name) {
-            app.dim_config[i].spatial = SpatialRole::Z;
-            z_assigned = true;
-        }
+    if let Some(grid_i) = healpix_dim_idx {
+        app.dim_config[grid_i].spatial = SpatialRole::Grid;
 
-        if rank >= 3 && !anim_assigned && crate::utils::coordinates::is_animated_time_name(dim_name)
-        {
-            app.dim_config[i].animation = AnimationRole::Animated;
-            app.animated_dim = Some(i);
-            anim_assigned = true;
-        }
-    }
+        let mut z_assigned = false;
+        let mut anim_assigned = false;
 
-    // 2. Fallback spatial assignment for unassigned dimensions
-    for i in 0..rank {
-        if app.dim_config[i].spatial == SpatialRole::None
-            && app.dim_config[i].animation == AnimationRole::None
-        {
-            if !y_assigned {
-                app.dim_config[i].spatial = SpatialRole::Y;
-                y_assigned = true;
-            } else if !x_assigned {
-                app.dim_config[i].spatial = SpatialRole::X;
-                x_assigned = true;
-            } else if !z_assigned && rank >= 3 {
+        // Check for Z (layer/level/depth/elevation) and Anim (time)
+        for i in 0..rank {
+            if i == grid_i {
+                continue;
+            }
+            let dim_name = var_info
+                .dimension_names
+                .get(i)
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            if !z_assigned && crate::utils::coordinates::is_spatial_z_name(dim_name) {
                 app.dim_config[i].spatial = SpatialRole::Z;
                 z_assigned = true;
             }
-        }
-    }
-
-    // 3. For 3D datasets, assign Z if still unassigned
-    if rank >= 3 && !z_assigned {
-        for i in 0..rank {
-            if app.dim_config[i].spatial == SpatialRole::None {
-                app.dim_config[i].spatial = SpatialRole::Z;
-                break;
+            if !anim_assigned && crate::utils::coordinates::is_animated_time_name(dim_name) {
+                app.dim_config[i].animation = AnimationRole::Animated;
+                app.animated_dim = Some(i);
+                anim_assigned = true;
             }
         }
-    }
 
-    // 4. For 3D+ datasets, default animation dimension
-    if rank >= 3 && !anim_assigned {
-        let default_anim = (0..rank)
-            .find(|&i| app.dim_config[i].spatial == SpatialRole::Z)
-            .unwrap_or(0);
-        app.dim_config[default_anim].animation = AnimationRole::Animated;
-        app.animated_dim = Some(default_anim);
+        // Fallback animation assignment if time name was not standard
+        if !anim_assigned {
+            for i in 0..rank {
+                if i != grid_i && app.dim_config[i].spatial == SpatialRole::None {
+                    app.dim_config[i].animation = AnimationRole::Animated;
+                    app.animated_dim = Some(i);
+                    break;
+                }
+            }
+        }
+    } else {
+        let mut x_assigned = false;
+        let mut y_assigned = false;
+        let mut z_assigned = false;
+        let mut anim_assigned = false;
+
+        // 1. Match explicit named coordinate patterns
+        for i in 0..rank {
+            let dim_name = var_info
+                .dimension_names
+                .get(i)
+                .map(|s| s.as_str())
+                .unwrap_or("");
+
+            if !x_assigned && crate::utils::coordinates::is_spatial_x_name(dim_name) {
+                app.dim_config[i].spatial = SpatialRole::X;
+                x_assigned = true;
+            } else if !y_assigned && crate::utils::coordinates::is_spatial_y_name(dim_name) {
+                app.dim_config[i].spatial = SpatialRole::Y;
+                y_assigned = true;
+            } else if !z_assigned && crate::utils::coordinates::is_spatial_z_name(dim_name) {
+                app.dim_config[i].spatial = SpatialRole::Z;
+                z_assigned = true;
+            }
+
+            if rank >= 3
+                && !anim_assigned
+                && crate::utils::coordinates::is_animated_time_name(dim_name)
+            {
+                app.dim_config[i].animation = AnimationRole::Animated;
+                app.animated_dim = Some(i);
+                anim_assigned = true;
+            }
+        }
+
+        // 2. Fallback spatial assignment for unassigned dimensions
+        for i in 0..rank {
+            if app.dim_config[i].spatial == SpatialRole::None
+                && app.dim_config[i].animation == AnimationRole::None
+            {
+                if !y_assigned {
+                    app.dim_config[i].spatial = SpatialRole::Y;
+                    y_assigned = true;
+                } else if !x_assigned {
+                    app.dim_config[i].spatial = SpatialRole::X;
+                    x_assigned = true;
+                } else if !z_assigned && rank >= 3 {
+                    app.dim_config[i].spatial = SpatialRole::Z;
+                    z_assigned = true;
+                }
+            }
+        }
+
+        // 3. For 3D datasets, assign Z if still unassigned
+        if rank >= 3 && !z_assigned {
+            for i in 0..rank {
+                if app.dim_config[i].spatial == SpatialRole::None {
+                    app.dim_config[i].spatial = SpatialRole::Z;
+                    break;
+                }
+            }
+        }
+
+        // 4. For 3D+ datasets, default animation dimension
+        if rank >= 3 && !anim_assigned {
+            let default_anim = (0..rank)
+                .find(|&i| app.dim_config[i].spatial == SpatialRole::Z)
+                .unwrap_or(0);
+            app.dim_config[default_anim].animation = AnimationRole::Animated;
+            app.animated_dim = Some(default_anim);
+        }
     }
 
     // Synchronize active flags and spatial_dims list
@@ -163,9 +224,10 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
 
     app.spatial_dims
         .sort_by_key(|&d| match app.dim_config[d].spatial {
-            SpatialRole::X => 0,
-            SpatialRole::Y => 1,
-            SpatialRole::Z => 2,
+            SpatialRole::Grid => 0,
+            SpatialRole::X => 1,
+            SpatialRole::Y => 2,
+            SpatialRole::Z => 3,
             SpatialRole::None => 99,
         });
 }
@@ -177,43 +239,14 @@ pub fn calculate_max_animated_steps(
     selected_ranges: &[(usize, usize)],
     anim_dim: usize,
 ) -> (usize, usize, usize) {
-    let rank = var_info.shape.len();
-    if anim_dim >= rank {
-        return (1, 1, 1);
-    }
-
-    let mut spatial_elements_per_step: usize = 1;
-    for d in 0..rank {
-        if d == anim_dim {
-            continue;
-        }
-        if let Some(cfg) = dim_config.get(d)
-            && cfg.active
-        {
-            let span = if let Some(&(start, end)) = selected_ranges.get(d) {
-                end.saturating_sub(start) + 1
-            } else {
-                var_info.shape[d] as usize
-            };
-            spatial_elements_per_step = spatial_elements_per_step.saturating_mul(span.max(1));
-        }
-    }
-    if spatial_elements_per_step == 0 {
-        spatial_elements_per_step = 1;
-    }
-
-    let full_anim_size = var_info.shape[anim_dim] as usize;
-    let max_allowed = (crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS
-        / spatial_elements_per_step)
-        .clamp(1, full_anim_size.max(1));
-
-    let requested = if let Some(&(start, end)) = selected_ranges.get(anim_dim) {
-        end.saturating_sub(start) + 1
-    } else {
-        full_anim_size
-    };
-
-    (max_allowed, requested, spatial_elements_per_step)
+    let active_dims: Vec<bool> = dim_config.iter().map(|c| c.active).collect();
+    crate::utils::math::calculate_max_animated_steps(
+        &var_info.shape,
+        &active_dims,
+        selected_ranges,
+        anim_dim,
+        crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS,
+    )
 }
 
 /// Calculates requested download bytes and total file size for a variable.
@@ -223,30 +256,14 @@ pub fn calculate_download_sizes(
     selected_ranges: &[(usize, usize)],
 ) -> (u64, u64) {
     let dtype_bytes = crate::utils::data_type_bytes(&var_info.data_type);
-
-    let total_elements: u64 = var_info.shape.iter().copied().product::<u64>().max(1);
-    let total_bytes = if var_info.file_size > 0 {
-        var_info.file_size
-    } else {
-        total_elements.saturating_mul(dtype_bytes)
-    };
-
-    let rank = var_info.shape.len();
-    let mut requested_elements: u64 = 1;
-    for i in 0..rank {
-        let dim_size = var_info.shape[i] as usize;
-        if dim_config.get(i).is_some_and(|c| c.active) {
-            let span = if let Some(&(start, end)) = selected_ranges.get(i) {
-                (end.saturating_sub(start) + 1).min(dim_size)
-            } else {
-                dim_size
-            };
-            requested_elements = requested_elements.saturating_mul(span.max(1) as u64);
-        }
-    }
-    let requested_bytes = requested_elements.saturating_mul(dtype_bytes);
-
-    (requested_bytes, total_bytes)
+    let active_dims: Vec<bool> = dim_config.iter().map(|c| c.active).collect();
+    crate::utils::math::calculate_download_sizes(
+        &var_info.shape,
+        var_info.file_size,
+        dtype_bytes,
+        &active_dims,
+        selected_ranges,
+    )
 }
 
 /// Calculates the total 3D volume elements from active dimensions.
@@ -258,28 +275,19 @@ pub fn calculate_selected_volume_elements(app: &OctantApp) -> usize {
         return 0;
     };
 
-    let mut total_elements = 1usize;
-    let mut counted = 0;
-    for (i, &size) in var_info.shape.iter().enumerate() {
-        let is_active = app.dim_config.get(i).map(|c| c.active).unwrap_or(false)
-            || app.spatial_dims.contains(&i)
-            || app.animated_dim == Some(i);
-        if is_active {
-            let (start, end) = app
-                .selected_dim_ranges
-                .get(i)
-                .copied()
-                .unwrap_or((0, (size as usize).saturating_sub(1)));
-            let span = (end.saturating_sub(start) + 1).min(size as usize);
-            total_elements = total_elements.saturating_mul(span.max(1));
-            counted += 1;
-        }
-    }
-    if counted == 0 {
-        var_info.shape.iter().copied().product::<u64>() as usize
-    } else {
-        total_elements
-    }
+    let active_dims: Vec<bool> = (0..var_info.shape.len())
+        .map(|i| {
+            app.dim_config.get(i).map(|c| c.active).unwrap_or(false)
+                || app.spatial_dims.contains(&i)
+                || app.animated_dim == Some(i)
+        })
+        .collect();
+
+    crate::utils::math::calculate_volume_elements(
+        &var_info.shape,
+        &active_dims,
+        &app.selected_dim_ranges,
+    )
 }
 
 /// Calculates the total 2D plane elements for spatial X and Y dimensions.
@@ -299,25 +307,24 @@ pub fn calculate_selected_2d_elements(app: &OctantApp) -> usize {
         &app.dim_config,
     );
 
-    let get_span = |d: usize| -> usize {
-        if d >= rank {
-            return 1;
-        }
-        let size = var_info.shape[d] as usize;
-        if let Some(&(start, end)) = app.selected_dim_ranges.get(d) {
-            (end.saturating_sub(start) + 1).min(size)
-        } else {
-            size
-        }
-    };
-
-    let nx = get_span(x_dim);
-    let ny = if rank <= 1 { 1 } else { get_span(y_dim) };
-    nx.saturating_mul(ny)
+    crate::utils::math::calculate_2d_elements(
+        &var_info.shape,
+        x_dim,
+        y_dim,
+        &app.selected_dim_ranges,
+    )
 }
 
 /// Checks if 3D Volume / Point Cloud rendering is allowed under GPU storage limits.
 pub fn is_volume_allowed_for_selection(app: &OctantApp) -> bool {
+    // Discrete global grids (HEALPix) do not support 3D Volume or PointCloud raycasting
+    if app
+        .dim_config
+        .iter()
+        .any(|c| c.spatial == crate::app::SpatialRole::Grid)
+    {
+        return false;
+    }
     let elements = calculate_selected_volume_elements(app);
     if elements == 0 && app.active_dataset_metadata.is_some() {
         return false;
@@ -635,12 +642,14 @@ pub fn show_dimension_sliders(
                 egui::ComboBox::from_id_salt(("spatial_role", i))
                     .selected_text(match spatial {
                         SpatialRole::None => "None",
+                        SpatialRole::Grid => "Grid (2D/Globe)",
                         SpatialRole::X => "X",
                         SpatialRole::Y => "Y",
                         SpatialRole::Z => "Z",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut spatial, SpatialRole::None, "None");
+                        ui.selectable_value(&mut spatial, SpatialRole::Grid, "Grid (2D/Globe)");
                         ui.selectable_value(&mut spatial, SpatialRole::X, "X");
                         ui.selectable_value(&mut spatial, SpatialRole::Y, "Y");
                         ui.selectable_value(&mut spatial, SpatialRole::Z, "Z");
@@ -699,10 +708,20 @@ fn apply_role_change(dim: usize, spatial: SpatialRole, anim: AnimationRole, app:
 
     if spatial != old_spatial && spatial != SpatialRole::None {
         for j in 0..app.dim_config.len() {
-            if j != dim && app.dim_config[j].spatial == spatial {
-                app.dim_config[j].spatial = SpatialRole::None;
-                if app.dim_config[j].animation == AnimationRole::None {
-                    app.dim_config[j].active = false;
+            if j != dim {
+                let should_clear = (spatial == SpatialRole::Grid
+                    && (app.dim_config[j].spatial == SpatialRole::Grid
+                        || app.dim_config[j].spatial == SpatialRole::X
+                        || app.dim_config[j].spatial == SpatialRole::Y))
+                    || app.dim_config[j].spatial == spatial
+                    || (app.dim_config[j].spatial == SpatialRole::Grid
+                        && (spatial == SpatialRole::X || spatial == SpatialRole::Y));
+
+                if should_clear {
+                    app.dim_config[j].spatial = SpatialRole::None;
+                    if app.dim_config[j].animation == AnimationRole::None {
+                        app.dim_config[j].active = false;
+                    }
                 }
             }
         }
@@ -750,9 +769,10 @@ fn apply_role_change(dim: usize, spatial: SpatialRole, anim: AnimationRole, app:
     }
     app.spatial_dims
         .sort_by_key(|&d| match app.dim_config[d].spatial {
-            SpatialRole::X => 0,
-            SpatialRole::Y => 1,
-            SpatialRole::Z => 2,
+            SpatialRole::Grid => 0,
+            SpatialRole::X => 1,
+            SpatialRole::Y => 2,
+            SpatialRole::Z => 3,
             SpatialRole::None => 99,
         });
 
