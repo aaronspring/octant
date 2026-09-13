@@ -215,22 +215,11 @@ impl BlockStore for ProceduralBlockStore {
                 },
             ];
 
-            let mut dim_coords = HashMap::new();
-            let mut lons_vec = Vec::with_capacity(npix);
-            let mut lats_vec = Vec::with_capacity(npix);
-            for p in 0..npix {
-                let (lon_rad, lat_rad) = crate::data::coordinates::healpix::pix2ang_ring(nside, p);
-                lons_vec.push(format!("{:.4}", lon_rad.to_degrees()));
-                lats_vec.push(format!("{:.4}", lat_rad.to_degrees()));
-            }
-            dim_coords.insert("lon".to_string(), lons_vec);
-            dim_coords.insert("lat".to_string(), lats_vec);
-
             return Ok(DatasetMetadata {
                 name: "SpeedyWeather HEALPix Grid (Nside=16)".to_string(),
                 store_type: "Procedural / HEALPix".to_string(),
                 variables: vars,
-                dimension_coordinates: dim_coords,
+                dimension_coordinates: HashMap::new(),
             });
         }
 

@@ -43,6 +43,31 @@ pub fn is_irregular_series(coords: &[f64]) -> bool {
     delta_variation > 0.0005 // > 0.05% variation is considered irregular (e.g. Gaussian grids, Clenshaw-Curtis)
 }
 
+/// Helper to detect HEALPix ordering scheme with zero heap allocations.
+#[inline]
+pub fn detect_healpix_ordering(
+    attributes: &std::collections::HashMap<String, String>,
+) -> super::healpix::HealpixOrder {
+    let is_nested = attributes
+        .get("healpix_nest")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        || attributes
+            .get("healpix_order")
+            .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
+        || attributes
+            .get("ordering")
+            .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
+        || attributes.get("grid_type").is_some_and(|v| {
+            crate::utils::coordinates::contains_ascii_case_insensitive(v, "nested")
+        });
+
+    if is_nested {
+        super::healpix::HealpixOrder::Nested
+    } else {
+        super::healpix::HealpixOrder::Ring
+    }
+}
+
 /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays and OctantBlock metadata.
 pub fn detect_grid_from_block(
     block: &crate::data::OctantBlock,
@@ -69,28 +94,7 @@ pub fn detect_grid_from_block(
     if (is_healpix_x || is_healpix_y || is_healpix_attr)
         && let Some(nside) = super::healpix::npix_to_nside(npix)
     {
-        let is_nested = block
-            .attributes
-            .get("healpix_nest")
-            .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
-            || block
-                .attributes
-                .get("healpix_order")
-                .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
-            || block
-                .attributes
-                .get("ordering")
-                .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
-            || block
-                .attributes
-                .get("grid_type")
-                .is_some_and(|v| v.to_ascii_lowercase().contains("nested"));
-
-        let ordering = if is_nested {
-            super::healpix::HealpixOrder::Nested
-        } else {
-            super::healpix::HealpixOrder::Ring
-        };
+        let ordering = detect_healpix_ordering(&block.attributes);
 
         let coords_lon = block.coordinates.get("lon").map(|l| {
             let slice: Arc<[f32]> = l.iter().map(|&v| v as f32).collect();

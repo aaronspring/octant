@@ -63,21 +63,12 @@ pub fn raycast_surface(
         return None;
     }
 
-    let (mut px, mut py) = if let crate::data::CoordinateGrid::Healpix { .. } = &matrix.grid {
-        let lon_rad = u.clamp(0.0, 1.0) * 2.0 * std::f32::consts::PI;
-        let lat_rad = (0.5 - v.clamp(0.0, 1.0)) * std::f32::consts::PI;
-        matrix
-            .grid
-            .find_cell_from_lon_lat_rad(lon_rad, lat_rad, matrix.width, matrix.height)
-            .unwrap_or((0, 0))
-    } else {
-        matrix.grid.find_cell_from_norm(
-            u.clamp(0.0, 1.0),
-            v.clamp(0.0, 1.0),
-            matrix.width,
-            matrix.height,
-        )
-    };
+    let (mut px, mut py) = matrix.grid.find_cell_from_surface_uv(
+        u.clamp(0.0, 1.0),
+        v.clamp(0.0, 1.0),
+        matrix.width,
+        matrix.height,
+    );
     let cell_val = matrix
         .values
         .get(py * matrix.width + px)
@@ -95,22 +86,12 @@ pub fn raycast_surface(
         if (-0.05..=1.05).contains(&u_ref) && (-0.05..=1.05).contains(&v_ref) {
             u = u_ref;
             v = v_ref;
-            let (ref_px, ref_py) = if let crate::data::CoordinateGrid::Healpix { .. } = &matrix.grid
-            {
-                let lon_rad = u.clamp(0.0, 1.0) * 2.0 * std::f32::consts::PI;
-                let lat_rad = (0.5 - v.clamp(0.0, 1.0)) * std::f32::consts::PI;
-                matrix
-                    .grid
-                    .find_cell_from_lon_lat_rad(lon_rad, lat_rad, matrix.width, matrix.height)
-                    .unwrap_or((0, 0))
-            } else {
-                matrix.grid.find_cell_from_norm(
-                    u.clamp(0.0, 1.0),
-                    v.clamp(0.0, 1.0),
-                    matrix.width,
-                    matrix.height,
-                )
-            };
+            let (ref_px, ref_py) = matrix.grid.find_cell_from_surface_uv(
+                u.clamp(0.0, 1.0),
+                v.clamp(0.0, 1.0),
+                matrix.width,
+                matrix.height,
+            );
             px = ref_px;
             py = ref_py;
         }

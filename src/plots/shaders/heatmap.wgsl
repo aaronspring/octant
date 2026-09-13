@@ -62,12 +62,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (uniforms.coord_mode == 4u || uniforms.coord_mode == 5u) {
         let lon = (in.uv.x - 0.5) * 6.2831853;
         let lat = (0.5 - in.uv.y) * 3.14159265;
-        let npix = max(total_elements, 12u);
-        let nside = max(u32(round(sqrt(f32(npix) / 12.0))), 1u);
-        var pix = healpix_ang2pix_ring(nside, lon, lat);
-        if (uniforms.coord_mode == 5u) {
-            pix = healpix_ring2nest(nside, pix);
-        }
+        let nside = healpix_nside(total_elements);
+        let pix = healpix_ang2pix(nside, lon, lat, uniforms.coord_mode == 5u);
         cell_index = min(pix, max_idx);
     } else if (uniforms.coord_mode == 2u) {
         let max_lx = max(uniforms.lut_size_x, 1u) - 1u;

@@ -365,6 +365,20 @@ fn healpix_get_interpolated_corner_val(
     return data_buffer[min(pix, max_idx)];
 }
 
+/// Derives HEALPix Nside resolution parameter from total pixel count (npix = 12 * nside^2)
+fn healpix_nside(npix: u32) -> u32 {
+    return max(u32(round(sqrt(f32(max(npix, 12u)) / 12.0))), 1u);
+}
+
+/// Converts spherical (lon_rad, lat_rad) to HEALPix pixel index in Ring or Nested scheme
+fn healpix_ang2pix(nside: u32, lon_rad: f32, lat_rad: f32, is_nested: bool) -> u32 {
+    var pix = healpix_ang2pix_ring(nside, lon_rad, lat_rad);
+    if (is_nested) {
+        pix = healpix_ring2nest(nside, pix);
+    }
+    return pix;
+}
+
 fn get_lon_lat(
     cell_x: u32,
     cell_y: u32,
@@ -400,11 +414,9 @@ fn get_lon_lat(
     } else if (coord_mode == 4u || coord_mode == 5u) {
         // Mode 4/5: HEALPix discrete global grid (4: Ring, 5: Nested)
         let pix = cell_y * grid_w + cell_x;
-        let npix = max(grid_w * grid_h, 12u);
-        let nside = max(u32(round(sqrt(f32(npix) / 12.0))), 1u);
-        let is_nested = (coord_mode == 5u);
+        let nside = healpix_nside(grid_w * grid_h);
         let healpix_uv = vec2<f32>(model_xy.x, 1.0 - model_xy.y);
-        return healpix_pixel_uv_to_lon_lat(pix, healpix_uv, nside, is_nested);
+        return healpix_pixel_uv_to_lon_lat(pix, healpix_uv, nside, coord_mode == 5u);
     } else {
         // Mode 2: Irregular 1D Coordinate Buffers with heatmap-matching interval boundaries
         let bounds_u = get_cell_normalized_bounds_x(cell_x, grid_w, coord_mode);

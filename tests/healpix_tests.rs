@@ -270,3 +270,36 @@ fn test_healpix_nested_eerie_remote_compatibility() {
         );
     }
 }
+
+#[test]
+fn test_healpix_surface_uv_raycasting() {
+    use octant::data::coordinates::healpix::HealpixOrder;
+    use octant::data::coordinates::types::CoordinateGrid;
+
+    let nside = 16;
+    let npix = 3072;
+    let grid = CoordinateGrid::Healpix {
+        nside,
+        ordering: HealpixOrder::Ring,
+        npix,
+        coords_lon: None,
+        coords_lat: None,
+    };
+
+    // Test surface UV mapping round-trips for cells across the sphere
+    let sample_cells = [0, 50, 500, 1500, 2500, 3071];
+    for &cell in &sample_cells {
+        let (world_x, world_z) = grid.cell_center_surface_xz(cell, 0, npix, 1, 2.0);
+        let u = ((world_x / 2.0) + 1.0) * 0.5;
+        let v = (world_z + 1.0) * 0.5;
+
+        assert!((0.0..=1.0).contains(&u));
+        assert!((0.0..=1.0).contains(&v));
+
+        let (recovered_cell, _) = grid.find_cell_from_surface_uv(u, v, npix, 1);
+        assert_eq!(
+            recovered_cell, cell,
+            "Surface UV raycasting mismatch for cell {cell} at (u={u}, v={v})"
+        );
+    }
+}

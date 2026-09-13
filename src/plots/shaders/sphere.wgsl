@@ -84,11 +84,9 @@ fn vs_main(
     } else if (uniforms.sphere_mode == 1u) {
         // Mode 1: Smooth Bumpy Terrain
         if (uniforms.coord_mode == 4u || uniforms.coord_mode == 5u) {
-            let is_nested = (uniforms.coord_mode == 5u);
-            let npix = max(grid_w * grid_h, 12u);
-            let nside = max(u32(round(sqrt(f32(npix) / 12.0))), 1u);
+            let nside = healpix_nside(grid_w * grid_h);
             let healpix_uv = vec2<f32>(model.position.x, 1.0 - model.position.y);
-            raw_val = healpix_get_interpolated_corner_val(safe_idx, healpix_uv, nside, is_nested, max_idx);
+            raw_val = healpix_get_interpolated_corner_val(safe_idx, healpix_uv, nside, uniforms.coord_mode == 5u, max_idx);
         } else {
             let corner_x = min(cell_x + u32(round(model.position.x)), grid_w - 1u);
             let corner_y = min(cell_y + u32(round(model.position.y)), grid_h - 1u);

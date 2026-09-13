@@ -147,12 +147,8 @@ fn vs_main(
     var value = 0.0;
     if (in_bounds) {
         if (coastline_uniforms.coord_mode == 4u || coastline_uniforms.coord_mode == 5u) {
-            let npix = max(coastline_uniforms.width * coastline_uniforms.height, 12u);
-            let nside = max(u32(round(sqrt(f32(npix) / 12.0))), 1u);
-            var pix = healpix_ang2pix_ring(nside, cur_lon, cur_lat);
-            if (coastline_uniforms.coord_mode == 5u) {
-                pix = healpix_ring2nest(nside, pix);
-            }
+            let nside = healpix_nside(coastline_uniforms.width * coastline_uniforms.height);
+            let pix = healpix_ang2pix(nside, cur_lon, cur_lat, coastline_uniforms.coord_mode == 5u);
             let data_len = arrayLength(&data_buffer);
             if (data_len > 0u) {
                 value = data_buffer[min(pix, data_len - 1u)];

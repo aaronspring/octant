@@ -191,6 +191,45 @@ pub fn ang2pix_nest(nside: usize, lon_rad: f32, lat_rad: f32) -> usize {
 const JRLL: [isize; 12] = [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4];
 const JPLL: [isize; 12] = [1, 3, 5, 7, 0, 2, 4, 6, 1, 3, 5, 7];
 
+/// Parallel bitmask 2D Morton interleave (Z-order curve) in O(1) time.
+#[inline]
+pub fn morton_interleave2(x: usize, y: usize) -> usize {
+    let mut x = (x as u32) & 0x0000FFFF;
+    let mut y = (y as u32) & 0x0000FFFF;
+
+    x = (x | (x << 8)) & 0x00FF00FF;
+    x = (x | (x << 4)) & 0x0F0F0F0F;
+    x = (x | (x << 2)) & 0x33333333;
+    x = (x | (x << 1)) & 0x55555555;
+
+    y = (y | (y << 8)) & 0x00FF00FF;
+    y = (y | (y << 4)) & 0x0F0F0F0F;
+    y = (y | (y << 2)) & 0x33333333;
+    y = (y | (y << 1)) & 0x55555555;
+
+    (x | (y << 1)) as usize
+}
+
+/// Parallel bitmask 2D Morton deinterleave (Z-order curve) in O(1) time.
+#[inline]
+pub fn morton_deinterleave2(code: usize) -> (usize, usize) {
+    let code = code as u32;
+    let mut x = code & 0x55555555;
+    let mut y = (code >> 1) & 0x55555555;
+
+    x = (x | (x >> 1)) & 0x33333333;
+    x = (x | (x >> 2)) & 0x0F0F0F0F;
+    x = (x | (x >> 4)) & 0x00FF00FF;
+    x = (x | (x >> 8)) & 0x0000FFFF;
+
+    y = (y | (y >> 1)) & 0x33333333;
+    y = (y | (y >> 2)) & 0x0F0F0F0F;
+    y = (y | (y >> 4)) & 0x00FF00FF;
+    y = (y | (y >> 8)) & 0x0000FFFF;
+
+    (x as usize, y as usize)
+}
+
 /// Converts a pixel index from NESTED scheme to RING scheme.
 pub fn nest2ring(nside: usize, pix_nest: usize) -> usize {
     let npix = nside_to_npix(nside);
@@ -202,12 +241,7 @@ pub fn nest2ring(nside: usize, pix_nest: usize) -> usize {
     let face = (p_nest / nside_sq).min(11);
     let in_face = p_nest % nside_sq;
 
-    let mut ix = 0usize;
-    let mut iy = 0usize;
-    for b in 0..16 {
-        ix |= ((in_face >> (2 * b)) & 1) << b;
-        iy |= ((in_face >> (2 * b + 1)) & 1) << b;
-    }
+    let (ix, iy) = morton_deinterleave2(in_face);
 
     let nside_i = nside as isize;
     let nl4 = 4 * nside_i;
@@ -322,13 +356,7 @@ pub fn ring2nest(nside: usize, pix_ring: usize) -> usize {
         };
 
         if ix_isize >= 0 && ix_isize < nside_i && iy_isize >= 0 && iy_isize < nside_i {
-            let ix = ix_isize as usize;
-            let iy = iy_isize as usize;
-            let mut in_face = 0usize;
-            for b in 0..16 {
-                in_face |= ((ix >> b) & 1) << (2 * b);
-                in_face |= ((iy >> b) & 1) << (2 * b + 1);
-            }
+            let in_face = morton_interleave2(ix_isize as usize, iy_isize as usize);
             return face * (nside * nside) + in_face;
         }
     }

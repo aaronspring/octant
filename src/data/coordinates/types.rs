@@ -278,6 +278,25 @@ impl CoordinateGrid {
         }
     }
 
+    /// Maps normalized 3D surface model UV coordinates `(u, v)` (where u is along X/longitude and v is along Z/latitude) to cell indices `(px, py)` matching `surface.wgsl`.
+    pub fn find_cell_from_surface_uv(
+        &self,
+        u: f32,
+        v: f32,
+        width: usize,
+        height: usize,
+    ) -> (usize, usize) {
+        match self {
+            Self::Healpix { .. } => {
+                let lon_rad = u.clamp(0.0, 1.0) * 2.0 * std::f32::consts::PI;
+                let lat_rad = (0.5 - v.clamp(0.0, 1.0)) * std::f32::consts::PI;
+                self.find_cell_from_lon_lat_rad(lon_rad, lat_rad, width, height)
+                    .unwrap_or((0, 0))
+            }
+            _ => self.find_cell_from_norm(u.clamp(0.0, 1.0), v.clamp(0.0, 1.0), width, height),
+        }
+    }
+
     /// Maps geographic spherical coordinates `(lon_rad, lat_rad)` to cell indices `(px, py)`.
     pub fn find_cell_from_lon_lat_rad(
         &self,

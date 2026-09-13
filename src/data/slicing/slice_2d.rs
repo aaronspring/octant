@@ -7,22 +7,54 @@ use crate::data::slicing::coords::extract_sliced_coords_for_dim;
 /// Extracts a 1D slice representation formatted as MatrixData (width x 1).
 fn slice_1d(
     block: &OctantBlock,
+    x_dim: usize,
     x_range: (usize, usize),
+    fixed_indices: Option<&[usize]>,
     max_timesteps: usize,
     dataset_name: &str,
     compute_bounds: bool,
 ) -> Option<MatrixData> {
-    let full_x = block.shape.first().copied().unwrap_or(1);
+    if x_dim >= block.rank() {
+        return None;
+    }
+    let full_x = block.shape.get(x_dim).copied().unwrap_or(1);
     let (x_start, x_end, width) = clamp_slice_range(x_range, full_x);
     if width == 0 {
         return None;
     }
 
-    let values: Vec<f32> = if x_start + width <= block.values.len() {
-        block.values[x_start..x_start + width].to_vec()
+    let stride_x = block.strides.get(x_dim).copied().unwrap_or(1);
+    let base_offset = if let Some(fixed) = fixed_indices {
+        compute_fixed_dims_offset(fixed, &block.shape, &block.strides, x_dim, x_dim, None)
     } else {
-        (0..width)
-            .map(|x| block.values.get(x_start + x).copied().unwrap_or(f32::NAN))
+        0
+    };
+
+    let values: Vec<f32> = if stride_x == 1 {
+        let start = base_offset + x_start;
+        let end = base_offset + x_end;
+        if end <= block.values.len() {
+            block.values[start..end].to_vec()
+        } else {
+            (x_start..x_end)
+                .map(|x| {
+                    block
+                        .values
+                        .get(base_offset + x * stride_x)
+                        .copied()
+                        .unwrap_or(f32::NAN)
+                })
+                .collect()
+        }
+    } else {
+        (x_start..x_end)
+            .map(|x| {
+                block
+                    .values
+                    .get(base_offset + x * stride_x)
+                    .copied()
+                    .unwrap_or(f32::NAN)
+            })
             .collect()
     };
 
@@ -30,14 +62,14 @@ fn slice_1d(
         resolve_min_max(compute_bounds, &values, block.min_value, block.max_value);
     let x_name = block
         .dimension_names
-        .first()
+        .get(x_dim)
         .map(|s| s.as_str())
         .unwrap_or("x");
     let x_coords = extract_sliced_coords_for_dim(
         &block.coordinates,
         &block.dimension_names,
         &block.shape,
-        0,
+        x_dim,
         (x_start, x_end),
     );
     let grid = CoordinateGrid::detect_grid_from_block(
@@ -178,7 +210,15 @@ pub fn slice_2d_with_ranges(
     compute_bounds: bool,
 ) -> Option<MatrixData> {
     if block.rank() == 1 {
-        return slice_1d(block, x_range, max_timesteps, dataset_name, compute_bounds);
+        return slice_1d(
+            block,
+            0,
+            x_range,
+            None,
+            max_timesteps,
+            dataset_name,
+            compute_bounds,
+        );
     }
     if block.rank() == 0 {
         return slice_0d(block, max_timesteps, dataset_name);
@@ -189,84 +229,15 @@ pub fn slice_2d_with_ranges(
     }
 
     if x_dim == y_dim || y_dim >= block.rank() {
-        let full_x = block.shape[x_dim];
-        let (x_start, x_end, width) = clamp_slice_range(x_range, full_x);
-        if width == 0 {
-            return None;
-        }
-
-        let stride_x = block.strides[x_dim];
-        let base_offset = compute_fixed_dims_offset(
-            fixed_indices,
-            &block.shape,
-            &block.strides,
-            x_dim,
-            x_dim,
-            None,
-        );
-
-        let values = if stride_x == 1 {
-            let start = base_offset + x_start;
-            let end = base_offset + x_end;
-            if end <= block.values.len() {
-                block.values[start..end].to_vec()
-            } else {
-                (x_start..x_end)
-                    .map(|x| {
-                        block
-                            .values
-                            .get(base_offset + x * stride_x)
-                            .copied()
-                            .unwrap_or(f32::NAN)
-                    })
-                    .collect()
-            }
-        } else {
-            (x_start..x_end)
-                .map(|x| {
-                    block
-                        .values
-                        .get(base_offset + x * stride_x)
-                        .copied()
-                        .unwrap_or(f32::NAN)
-                })
-                .collect()
-        };
-
-        let (min_val, max_val) =
-            resolve_min_max(compute_bounds, &values, block.min_value, block.max_value);
-        let x_name = block
-            .dimension_names
-            .get(x_dim)
-            .map(|s| s.as_str())
-            .unwrap_or("x");
-        let x_coords = extract_sliced_coords_for_dim(
-            &block.coordinates,
-            &block.dimension_names,
-            &block.shape,
-            x_dim,
-            (x_start, x_end),
-        );
-        let grid = CoordinateGrid::detect_grid_from_block(
+        return slice_1d(
             block,
-            x_name,
-            "y",
-            x_coords.as_deref(),
-            None,
-            width,
-            1,
-        );
-
-        return Some(MatrixData::new_with_grid(
-            width,
-            1,
-            values,
-            min_val,
-            max_val,
-            dataset_name.to_string(),
+            x_dim,
+            x_range,
+            Some(fixed_indices),
             max_timesteps,
-            grid,
-        ));
+            dataset_name,
+            compute_bounds,
+        );
     }
 
     let full_x = block.shape[x_dim];
