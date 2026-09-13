@@ -1,7 +1,7 @@
 //! HEALPix (Hierarchical Equal Area isoLatitude Pixelation) discrete global grid math.
 //!
 //! Implements O(1) constant-time coordinate mappings (pix2ang, ang2pix), ring/nested conversions,
-//! and cell polygon boundaries matching SpeedyWeather, cuHPX, and Healpy standards.
+//! and cell polygon boundaries matching standard HEALPix formulation (Górski et al., 2005).
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -375,7 +375,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_speedy_weather_nside16_ring1() {
+    fn test_healpix_nside16_ring1() {
         let nside = 16;
         let npix = nside_to_npix(nside);
         assert_eq!(npix, 3072);

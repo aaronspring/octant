@@ -285,7 +285,7 @@ pub static ICECHUNK_CATALOG: &[CatalogEntry] = &[
 pub static PROCEDURAL_CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         key: "procedural-healpix",
-        label: "HEALPix Global Grid (SpeedyWeather)",
+        label: "HEALPix Discrete Global Grid",
         subtitle: "Synthetic Baroclinic Waves on Nside=16 & 32 HEALPix Discrete Global Grids",
         store: "procedural://healpix",
         store_kind: StoreKind::ProceduralRandom,

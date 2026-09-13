@@ -4,12 +4,12 @@ use octant::data::coordinates::healpix::*;
 use octant::data::slice_request::{DimensionSelection, SliceRequest};
 
 #[test]
-fn test_healpix_speedyweather_nside16_first_ring() {
+fn test_healpix_nside16_first_ring() {
     let nside = 16;
     let npix = nside_to_npix(nside);
     assert_eq!(npix, 3072);
 
-    // Exact values from SpeedyWeather.jl / cuHPX:
+    // Analytical values for Nside=16 first ring:
     // lat = 87.07581964294992
     // lon = [45.0, 135.0, 225.0, 315.0]
     // ring = [1, 1, 1, 1]
@@ -212,13 +212,12 @@ fn test_healpix_cell_index_to_lon_lat_mapping() {
 }
 
 #[test]
-fn test_healpix_nested_eerie_remote_compatibility() {
+fn test_healpix_nested_highres_compatibility() {
     use octant::data::coordinates::types::CoordinateGrid;
     use octant::data::octant_block::OctantBlock;
     use std::collections::HashMap;
 
-    // Matches the user's remote EERIE climate dataset:
-    // Shape: [1, 196608], zoom: 7 => nside = 2^7 = 128, npix = 12 * 128^2 = 196608
+    // High-resolution Nested HEALPix grid (zoom: 7 => Nside = 128, Npix = 196,608):
     let nside = 128;
     let npix = nside_to_npix(nside);
     assert_eq!(npix, 196608);

@@ -216,7 +216,7 @@ impl BlockStore for ProceduralBlockStore {
             ];
 
             return Ok(DatasetMetadata {
-                name: "SpeedyWeather HEALPix Grid (Nside=16)".to_string(),
+                name: "HEALPix Discrete Global Grid (Nside=16)".to_string(),
                 store_type: "Procedural / HEALPix".to_string(),
                 variables: vars,
                 dimension_coordinates: HashMap::new(),
