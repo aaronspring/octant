@@ -156,24 +156,4 @@ pub fn generate_colorbar_ticks(
     ticks
 }
 
-/// Formats tick values cleanly using integer/decimal or concise scientific notation.
-pub fn format_scientific_tick(val: f32) -> String {
-    let abs_val = val.abs();
-    if abs_val == 0.0 {
-        "0".to_string()
-    } else if !(0.001..10000.0).contains(&abs_val) {
-        let s = format!("{:.2e}", val);
-        if let Some((mantissa, exponent)) = s.split_once('e') {
-            let clean_mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
-            format!("{}e{}", clean_mantissa, exponent)
-        } else {
-            s
-        }
-    } else if (val.fract()).abs() < 1e-5 {
-        format!("{:.0}", val)
-    } else if (val * 10.0).fract().abs() < 1e-5 {
-        format!("{:.1}", val)
-    } else {
-        format!("{:.2}", val)
-    }
-}
+pub use crate::utils::math::format_scientific_tick;

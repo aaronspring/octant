@@ -239,43 +239,14 @@ pub fn calculate_max_animated_steps(
     selected_ranges: &[(usize, usize)],
     anim_dim: usize,
 ) -> (usize, usize, usize) {
-    let rank = var_info.shape.len();
-    if anim_dim >= rank {
-        return (1, 1, 1);
-    }
-
-    let mut spatial_elements_per_step: usize = 1;
-    for d in 0..rank {
-        if d == anim_dim {
-            continue;
-        }
-        if let Some(cfg) = dim_config.get(d)
-            && cfg.active
-        {
-            let span = if let Some(&(start, end)) = selected_ranges.get(d) {
-                end.saturating_sub(start) + 1
-            } else {
-                var_info.shape[d] as usize
-            };
-            spatial_elements_per_step = spatial_elements_per_step.saturating_mul(span.max(1));
-        }
-    }
-    if spatial_elements_per_step == 0 {
-        spatial_elements_per_step = 1;
-    }
-
-    let full_anim_size = var_info.shape[anim_dim] as usize;
-    let max_allowed = (crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS
-        / spatial_elements_per_step)
-        .clamp(1, full_anim_size.max(1));
-
-    let requested = if let Some(&(start, end)) = selected_ranges.get(anim_dim) {
-        end.saturating_sub(start) + 1
-    } else {
-        full_anim_size
-    };
-
-    (max_allowed, requested, spatial_elements_per_step)
+    let active_dims: Vec<bool> = dim_config.iter().map(|c| c.active).collect();
+    crate::utils::math::calculate_max_animated_steps(
+        &var_info.shape,
+        &active_dims,
+        selected_ranges,
+        anim_dim,
+        crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS,
+    )
 }
 
 /// Calculates requested download bytes and total file size for a variable.
@@ -285,30 +256,14 @@ pub fn calculate_download_sizes(
     selected_ranges: &[(usize, usize)],
 ) -> (u64, u64) {
     let dtype_bytes = crate::utils::data_type_bytes(&var_info.data_type);
-
-    let total_elements: u64 = var_info.shape.iter().copied().product::<u64>().max(1);
-    let total_bytes = if var_info.file_size > 0 {
-        var_info.file_size
-    } else {
-        total_elements.saturating_mul(dtype_bytes)
-    };
-
-    let rank = var_info.shape.len();
-    let mut requested_elements: u64 = 1;
-    for i in 0..rank {
-        let dim_size = var_info.shape[i] as usize;
-        if dim_config.get(i).is_some_and(|c| c.active) {
-            let span = if let Some(&(start, end)) = selected_ranges.get(i) {
-                (end.saturating_sub(start) + 1).min(dim_size)
-            } else {
-                dim_size
-            };
-            requested_elements = requested_elements.saturating_mul(span.max(1) as u64);
-        }
-    }
-    let requested_bytes = requested_elements.saturating_mul(dtype_bytes);
-
-    (requested_bytes, total_bytes)
+    let active_dims: Vec<bool> = dim_config.iter().map(|c| c.active).collect();
+    crate::utils::math::calculate_download_sizes(
+        &var_info.shape,
+        var_info.file_size,
+        dtype_bytes,
+        &active_dims,
+        selected_ranges,
+    )
 }
 
 /// Calculates the total 3D volume elements from active dimensions.
@@ -320,28 +275,19 @@ pub fn calculate_selected_volume_elements(app: &OctantApp) -> usize {
         return 0;
     };
 
-    let mut total_elements = 1usize;
-    let mut counted = 0;
-    for (i, &size) in var_info.shape.iter().enumerate() {
-        let is_active = app.dim_config.get(i).map(|c| c.active).unwrap_or(false)
-            || app.spatial_dims.contains(&i)
-            || app.animated_dim == Some(i);
-        if is_active {
-            let (start, end) = app
-                .selected_dim_ranges
-                .get(i)
-                .copied()
-                .unwrap_or((0, (size as usize).saturating_sub(1)));
-            let span = (end.saturating_sub(start) + 1).min(size as usize);
-            total_elements = total_elements.saturating_mul(span.max(1));
-            counted += 1;
-        }
-    }
-    if counted == 0 {
-        var_info.shape.iter().copied().product::<u64>() as usize
-    } else {
-        total_elements
-    }
+    let active_dims: Vec<bool> = (0..var_info.shape.len())
+        .map(|i| {
+            app.dim_config.get(i).map(|c| c.active).unwrap_or(false)
+                || app.spatial_dims.contains(&i)
+                || app.animated_dim == Some(i)
+        })
+        .collect();
+
+    crate::utils::math::calculate_volume_elements(
+        &var_info.shape,
+        &active_dims,
+        &app.selected_dim_ranges,
+    )
 }
 
 /// Calculates the total 2D plane elements for spatial X and Y dimensions.
@@ -361,25 +307,12 @@ pub fn calculate_selected_2d_elements(app: &OctantApp) -> usize {
         &app.dim_config,
     );
 
-    let get_span = |d: usize| -> usize {
-        if d >= rank {
-            return 1;
-        }
-        let size = var_info.shape[d] as usize;
-        if let Some(&(start, end)) = app.selected_dim_ranges.get(d) {
-            (end.saturating_sub(start) + 1).min(size)
-        } else {
-            size
-        }
-    };
-
-    let nx = get_span(x_dim);
-    let ny = if rank <= 1 || x_dim == y_dim {
-        1
-    } else {
-        get_span(y_dim)
-    };
-    nx.saturating_mul(ny)
+    crate::utils::math::calculate_2d_elements(
+        &var_info.shape,
+        x_dim,
+        y_dim,
+        &app.selected_dim_ranges,
+    )
 }
 
 /// Checks if 3D Volume / Point Cloud rendering is allowed under GPU storage limits.

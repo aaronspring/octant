@@ -6,27 +6,15 @@ use crate::ui::hover::camera::Camera3D;
 use egui::Pos2;
 
 /// Computes normalized surface height on the 3D surface mesh matching surface.wgsl
+#[inline]
 pub fn get_normalized_surface_height(app: &OctantApp, val: f32) -> f32 {
-    if val.is_nan() || !val.is_finite() {
-        return 0.0;
-    }
-    let cmin = app.color_range_min;
-    let cmax = app.color_range_max;
-    let range = (cmax - cmin).max(1e-6);
-    let disp = app.surface_displacement_strength;
-
-    let mult = match app.surface_mode {
-        1 => 0.6, // Flat Steps
-        _ => 0.8, // Smooth Terrain (0) and 3D Lego Cubes (2)
-    };
-
-    if cmin < 0.0 && cmax > 0.0 {
-        let max_abs = cmin.abs().max(cmax.abs());
-        (val / max_abs).clamp(-1.0, 1.0) * mult * disp
-    } else {
-        let norm_val = ((val - cmin) / range).clamp(0.0, 1.0);
-        norm_val * mult * disp
-    }
+    crate::utils::math::compute_normalized_surface_height(
+        val,
+        app.color_range_min,
+        app.color_range_max,
+        app.surface_mode,
+        app.surface_displacement_strength,
+    )
 }
 
 /// Raycasts against the 3D elevation surface heightfield.
