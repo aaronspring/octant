@@ -111,3 +111,57 @@ fn test_blusc_codec_int16_round_trip() {
         .expect("decompression should succeed");
     assert_eq!(decompressed.as_ref(), bytes);
 }
+
+#[test]
+fn test_blusc_decompress_various_compressors() {
+    use blusc::api::*;
+    use blusc::*;
+
+    let original_data: Vec<f32> = (0..2048)
+        .map(|i| if i % 17 == 0 { 0.0 } else { (i as f32) * 1.25 })
+        .collect();
+    let bytes: &[u8] = bytemuck::cast_slice(&original_data);
+    let codec = BluscCodec::new();
+    let options = CodecOptions::default();
+    let rep = BytesRepresentation::UnboundedSize;
+
+    let compressors = [
+        (BLOSC_BLOSCLZ, "blosclz"),
+        (BLOSC_LZ4, "lz4"),
+        (BLOSC_SNAPPY, "snappy"),
+        (BLOSC_ZLIB, "zlib"),
+        (BLOSC_ZSTD, "zstd"),
+    ];
+
+    for (compcode, compname) in compressors {
+        for shuffle in [BLOSC_NOSHUFFLE, BLOSC_SHUFFLE, BLOSC_BITSHUFFLE] {
+            let mut cparams = BLOSC2_CPARAMS_DEFAULTS;
+            cparams.compcode = compcode;
+            cparams.typesize = 4;
+            cparams.filters[5] = shuffle;
+            cparams.clevel = 5;
+
+            let cctx = blosc2_create_cctx(cparams);
+            let mut compressed = vec![0u8; bytes.len() + BLOSC2_MAX_OVERHEAD];
+            let csize = blosc2_compress_ctx(&cctx, bytes, &mut compressed);
+            assert!(
+                csize > 0,
+                "Compression failed for {compname} with shuffle {shuffle}"
+            );
+            compressed.truncate(csize as usize);
+
+            let decompressed = codec
+                .decode(compressed.into(), &rep, &options)
+                .unwrap_or_else(|e| {
+                    panic!("Decompression failed for {compname} with shuffle {shuffle}: {e:?}")
+                });
+
+            let recovered: &[f32] = bytemuck::cast_slice(decompressed.as_ref());
+            assert_eq!(
+                recovered,
+                original_data.as_slice(),
+                "Mismatch for {compname} with shuffle {shuffle}"
+            );
+        }
+    }
+}

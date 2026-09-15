@@ -196,19 +196,19 @@ impl WasmZarrBlockStore {
         let mut current = chunk_ranges.iter().map(|r| r.start).collect::<Vec<u64>>();
         loop {
             let chunk_rel_key = array.chunk_key(&current);
-            let store_key_str = if clean_var.is_empty() {
-                chunk_rel_key.as_str().to_string()
-            } else {
-                format!("{clean_var}/{}", chunk_rel_key.as_str())
-            };
+            let store_key_str = chunk_rel_key.as_str().to_string();
 
             if !self.has_key(&store_key_str) {
                 let chunk_url = format!("{}/{}", self.base_url, store_key_str);
-                log::debug!("[WASM Zarr] Fetching chunk: {chunk_url}");
+                log::info!("[WASM Zarr] Fetching chunk: {chunk_url}");
 
                 match fetch_url_bytes(&chunk_url).await {
                     Ok(chunk_bytes) => {
                         let bytes_len = chunk_bytes.len() as u64;
+                        log::info!(
+                            "[WASM Zarr] Fetched chunk {store_key_str} ({} bytes)",
+                            bytes_len
+                        );
                         self.insert_key_bytes(&store_key_str, &chunk_bytes)?;
 
                         if let Some(ref mut cb) = on_progress {
@@ -216,12 +216,13 @@ impl WasmZarrBlockStore {
                         }
                     }
                     Err(err) if err.contains("HTTP 404") => {
-                        log::debug!(
-                            "[WASM Zarr] Chunk not found (404 / sparse chunk): {chunk_url}"
+                        log::warn!(
+                            "[WASM Zarr] Chunk not found (HTTP 404 / sparse chunk): {chunk_url}"
                         );
                         // In Zarr specification, missing chunks are treated as fill value.
                     }
                     Err(err) => {
+                        log::error!("[WASM Zarr] Failed to fetch chunk '{chunk_url}': {err}");
                         return Err(format!("Failed to fetch chunk '{chunk_url}': {err}").into());
                     }
                 }
@@ -242,7 +243,50 @@ impl WasmZarrBlockStore {
             }
         }
 
+        // Preload associated 1D coordinate arrays (e.g. lat, lon, time) for spatial bounds & axes
+        let dim_names = crate::utils::resolve_array_dimension_names(&array);
+        self.preload_coordinate_chunks(&dim_names).await;
+
         Ok(())
+    }
+
+    /// Preloads chunks for 1D coordinate arrays (e.g. lat, lon, time) associated with this dataset.
+    pub async fn preload_coordinate_chunks(&self, dim_names: &[String]) {
+        let mut coord_candidates = Vec::new();
+        for dim in dim_names {
+            let clean = dim.trim().trim_start_matches('/').to_string();
+            if !coord_candidates.contains(&clean) {
+                coord_candidates.push(clean);
+            }
+        }
+        for fallback in &["lat", "latitude", "y", "lon", "longitude", "x", "time"] {
+            let s = fallback.to_string();
+            if !coord_candidates.contains(&s) {
+                coord_candidates.push(s);
+            }
+        }
+
+        for coord_name in coord_candidates {
+            let coord_path = format!("/{coord_name}");
+            if let Ok(coord_array) =
+                open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
+                && coord_array.shape().len() == 1
+            {
+                let zero = vec![0u64];
+                let chunk_key = coord_array.chunk_key(&zero);
+                let store_key = chunk_key.as_str().to_string();
+                if !self.has_key(&store_key) {
+                    let chunk_url = format!("{}/{}", self.base_url, store_key);
+                    if let Ok(bytes) = fetch_url_bytes(&chunk_url).await {
+                        let _ = self.insert_key_bytes(&store_key, &bytes);
+                        log::info!(
+                            "[WASM Zarr] Preloaded coordinate chunk '{store_key}' ({} bytes)",
+                            bytes.len()
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
