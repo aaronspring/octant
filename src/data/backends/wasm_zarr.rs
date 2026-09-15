@@ -170,16 +170,7 @@ impl WasmZarrBlockStore {
         let var_path = format!("/{clean_var}");
 
         let array = open_or_instantiate_array_normalized(self.memory_store.clone(), &var_path)
-            .map_err(|e| {
-                let err_str = e.to_string();
-                if err_str.contains("blosc") {
-                    "Compressed with Blosc (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-                } else if err_str.contains("zstd") {
-                    "Compressed with Zstd (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-                } else {
-                    format!("Failed to open array '{clean_var}': {err_str}")
-                }
-            })?;
+            .map_err(|e| format!("Failed to open array '{clean_var}': {e}"))?;
 
         let rank = array.shape().len();
         let zero_idx = vec![0u64; rank];
@@ -541,19 +532,11 @@ pub async fn load_one_wasm_with_progress(
         .preload_chunks_for_subset(&request.slice.variable, &subset, on_progress)
         .await
     {
-        let err_str = e.to_string();
-        let user_msg = if err_str.contains("blosc") {
-            "Compressed with Blosc (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-        } else if err_str.contains("zstd") {
-            "Compressed with Zstd (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-        } else {
-            err_str
-        };
         log::error!(
-            "[WASM Zarr] Failed downloading chunks for '{}': {user_msg}",
+            "[WASM Zarr] Failed downloading chunks for '{}': {e}",
             request.slice.variable
         );
-        return Err(user_msg.into());
+        return Err(e);
     }
 
     // Now decode the slice synchronously from in-memory chunks
@@ -568,19 +551,11 @@ pub async fn load_one_wasm_with_progress(
             Ok(block)
         }
         Err(e) => {
-            let err_str = e.to_string();
-            let user_msg = if err_str.contains("blosc") {
-                "Compressed with Blosc (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-            } else if err_str.contains("zstd") {
-                "Compressed with Zstd (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-            } else {
-                err_str
-            };
             log::error!(
-                "[WASM Zarr] Failed decoding block for '{}': {user_msg}",
+                "[WASM Zarr] Failed decoding block for '{}': {e}",
                 request.slice.variable
             );
-            Err(user_msg.into())
+            Err(e)
         }
     }
 }

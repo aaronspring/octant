@@ -4417,6 +4417,7 @@ name = "octant"
 version = "0.2.6"
 dependencies = [
  "arboard",
+ "blusc",
  "bytemuck",
  "console_error_panic_hook",
  "console_log",
@@ -4444,8 +4445,11 @@ dependencies = [
  "web-time",
  "wgpu",
  "zarrs",
+ "zarrs_codec",
  "zarrs_icechunk",
+ "zarrs_metadata",
  "zarrs_object_store",
+ "zarrs_plugin",
 ]
 
 [[package]]
