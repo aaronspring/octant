@@ -67,4 +67,8 @@ blusc = "0.0.6"
 [dev-dependencies]
 blusc = "0.0.6"
 
+[patch.crates-io]
+blusc = { path = "dev/blusc" }
+
+
 
