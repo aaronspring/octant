@@ -1,4 +1,5 @@
-//! Pure-Rust WebAssembly symbols shim for zstd C API to satisfy `icechunk-format` linking.
+//! Pure-Rust WebAssembly symbols shim for zstd C API to satisfy `icechunk-format` linking
+//! when compiling on toolchains without a C compiler for `wasm32-unknown-unknown`.
 
 #[cfg(target_arch = "wasm32")]
 mod shim {
