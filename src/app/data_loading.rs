@@ -157,10 +157,18 @@ impl OctantApp {
             wasm_bindgen_futures::spawn_local(async move {
                 let res = match store_kind {
                     StoreKind::RemoteZarr => {
-                        crate::data::backends::wasm_zarr::inspect_wasm_remote_zarr(&target_clone).await
+                        let zarr_res = crate::data::backends::wasm_zarr::inspect_wasm_remote_zarr(&target_clone).await;
+                        if zarr_res.is_err() && (target_clone.contains("icechunk") || target_clone.starts_with("icechunk+")) {
+                            crate::data::backends::wasm_icechunk::inspect_wasm_remote_icechunk(&target_clone).await
+                        } else {
+                            zarr_res
+                        }
                     }
-                    StoreKind::LocalZarr => {
-                        Err("Direct local file paths cannot be read in a browser due to web sandbox security.\n\nTo view local Zarr files in the browser:\n1. Serve your directory with a local HTTP server: `npx serve` or `python3 -m http.server`\n2. Enter the URL: `http://localhost:8000/my_dataset.zarr`\n\nOr run the native desktop version of Octant (`cargo run --release`).".to_string())
+                    StoreKind::RemoteIcechunk => {
+                        crate::data::backends::wasm_icechunk::inspect_wasm_remote_icechunk(&target_clone).await
+                    }
+                    StoreKind::LocalZarr | StoreKind::LocalIcechunk => {
+                        Err("Direct local file paths cannot be read in a browser due to web sandbox security.\n\nTo view local datasets in the browser:\n1. Serve your directory with a local HTTP server: `npx serve` or `python3 -m http.server`\n2. Enter the URL: `http://localhost:8000/my_dataset`\n\nOr run the native desktop version of Octant (`cargo run --release`).".to_string())
                     }
                     _ => {
                         let kind = store_kind.to_data_source_kind();

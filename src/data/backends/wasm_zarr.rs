@@ -68,6 +68,62 @@ pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
     Ok(uint8_array.to_vec())
 }
 
+/// Fetches a specific byte range from a remote URL using HTTP Range headers.
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_url_byte_range(url: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_sys::window().ok_or_else(|| "No global window object found".to_string())?;
+
+    let headers =
+        web_sys::Headers::new().map_err(|e| format!("Failed to create headers: {e:?}"))?;
+    let end = offset.saturating_add(length).saturating_sub(1);
+    let range_val = format!("bytes={offset}-{end}");
+    headers
+        .set("Range", &range_val)
+        .map_err(|e| format!("Failed to set Range header: {e:?}"))?;
+
+    let init = web_sys::RequestInit::new();
+    init.set_method("GET");
+    init.set_headers(&headers);
+
+    let request = web_sys::Request::new_with_str_and_init(url, &init)
+        .map_err(|e| format!("Failed to build request: {e:?}"))?;
+
+    let resp_val = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("Network range fetch failed for '{url}': {e:?}"))?;
+
+    let resp: web_sys::Response = resp_val
+        .dyn_into()
+        .map_err(|_| "Failed to cast fetch response".to_string())?;
+
+    let status = resp.status();
+    if status != 200 && status != 206 {
+        return Err(format!("HTTP {status} fetching byte range from '{url}'"));
+    }
+
+    let array_buffer_prom = resp
+        .array_buffer()
+        .map_err(|e| format!("Failed to read array buffer: {e:?}"))?;
+
+    let array_buffer_val = JsFuture::from(array_buffer_prom)
+        .await
+        .map_err(|e| format!("Failed to resolve array buffer: {e:?}"))?;
+
+    let uint8_array = js_sys::Uint8Array::new(&array_buffer_val);
+    let bytes = uint8_array.to_vec();
+    if status == 200 && (bytes.len() as u64) > length {
+        let start = offset as usize;
+        let slice_end = (offset + length) as usize;
+        if start < bytes.len() {
+            return Ok(bytes[start..slice_end.min(bytes.len())].to_vec());
+        }
+    }
+    Ok(bytes)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
     reqwest::get(url)
@@ -77,6 +133,33 @@ pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
         .await
         .map(|b| b.to_vec())
         .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn fetch_url_byte_range(url: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::new();
+    let end = offset.saturating_add(length).saturating_sub(1);
+    let resp = client
+        .get(url)
+        .header("Range", format!("bytes={offset}-{end}"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = resp.status().as_u16();
+    if status != 200 && status != 206 {
+        return Err(format!("HTTP {status} fetching byte range from '{url}'"));
+    }
+
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    if status == 200 && (bytes.len() as u64) > length {
+        let start = offset as usize;
+        let slice_end = (offset + length) as usize;
+        if start < bytes.len() {
+            return Ok(bytes[start..slice_end.min(bytes.len())].to_vec());
+        }
+    }
+    Ok(bytes)
 }
 
 /// WASM-compatible Zarr BlockStore backed by in-memory metadata and on-demand chunk fetching.
@@ -525,6 +608,15 @@ pub async fn load_one_wasm_with_progress(
     on_progress: ProgressCallback<'_>,
 ) -> Result<OctantBlock, BlockStoreError> {
     let source_uri = &request.store.source().uri;
+
+    // Route Icechunk data sources to Icechunk WASM loader
+    if request.store.source().kind == crate::data::DataSourceKind::RemoteIcechunk
+        || request.store.source().kind == crate::data::DataSourceKind::LocalIcechunk
+        || source_uri.starts_with("icechunk+")
+    {
+        return super::wasm_icechunk::load_one_icechunk_wasm_with_progress(request, on_progress)
+            .await;
+    }
 
     // If it's a procedural dataset or non-HTTP store, fetch directly
     if source_uri.starts_with("procedural://") || source_uri.starts_with("test://") {

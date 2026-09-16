@@ -165,3 +165,24 @@ fn test_blusc_decompress_various_compressors() {
         }
     }
 }
+
+#[test]
+fn test_ruzstd_codec_decompress() {
+    let codec = RuzstdCodec::new();
+    let options = CodecOptions::default();
+    let rep = BytesRepresentation::UnboundedSize;
+
+    // A valid Zstandard compressed frame for string "Hello Zstd from Octant WASM!"
+    // Generated with zstd level 3
+    let original = b"Hello Zstd from Octant WASM!";
+    let compressed_bytes = vec![
+        0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x1c, 0xe1, 0x00, 0x00, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20,
+        0x5a, 0x73, 0x74, 0x64, 0x20, 0x66, 0x72, 0x6f, 0x6d, 0x20, 0x4f, 0x63, 0x74, 0x61, 0x6e,
+        0x74, 0x20, 0x57, 0x41, 0x53, 0x4d, 0x21, 0x68, 0x02, 0xa7, 0x3d,
+    ];
+
+    let decompressed = codec
+        .decode(compressed_bytes.into(), &rep, &options)
+        .expect("RuzstdCodec decompression should succeed");
+    assert_eq!(decompressed.as_ref(), original);
+}

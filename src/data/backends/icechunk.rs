@@ -70,33 +70,46 @@ impl BlockStore for IcechunkBlockStore {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub struct IcechunkBlockStore;
+use super::wasm_icechunk::WasmIcechunkBlockStore;
+#[cfg(target_arch = "wasm32")]
+use std::sync::Arc;
+
+#[cfg(target_arch = "wasm32")]
+pub struct IcechunkBlockStore {
+    inner: Arc<WasmIcechunkBlockStore>,
+}
 
 #[cfg(target_arch = "wasm32")]
 impl IcechunkBlockStore {
-    pub fn open(_location: &str) -> Result<Self, BlockStoreError> {
-        Err(
-            "Icechunk repositories are only supported on the native desktop version of Octant."
-                .into(),
-        )
+    pub fn open(location: &str) -> Result<Self, BlockStoreError> {
+        let inner = WasmIcechunkBlockStore::get_or_create(location);
+        Ok(Self { inner })
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl BlockStore for IcechunkBlockStore {
     fn backend_name(&self) -> &str {
-        "Icechunk"
+        self.inner.backend_name()
     }
 
     fn variables(&self) -> Result<Vec<String>, BlockStoreError> {
-        Err("Icechunk is not supported on web".into())
+        self.inner.variables()
+    }
+
+    fn inspect(&self) -> Result<crate::data::DatasetMetadata, BlockStoreError> {
+        self.inner.inspect()
+    }
+
+    fn fetch_block(&self, request: &SliceRequest) -> Result<OctantBlock, BlockStoreError> {
+        self.inner.fetch_block(request)
     }
 
     fn fetch_block_with_progress(
         &self,
-        _request: &SliceRequest,
-        _on_progress: ProgressCallback,
+        request: &SliceRequest,
+        on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
-        Err("Icechunk is not supported on web".into())
+        self.inner.fetch_block_with_progress(request, on_progress)
     }
 }

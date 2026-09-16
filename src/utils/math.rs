@@ -128,7 +128,12 @@ pub fn calculate_download_sizes(
     active_dims: &[bool],
     selected_ranges: &[(usize, usize)],
 ) -> (u64, u64) {
-    let total_elements: u64 = shape.iter().copied().product::<u64>().max(1);
+    let total_elements: u64 = shape
+        .iter()
+        .copied()
+        .try_fold(1u64, |acc, x| acc.checked_mul(x))
+        .unwrap_or(u64::MAX)
+        .max(1);
     let total_bytes = if file_size > 0 {
         file_size
     } else {
@@ -173,7 +178,11 @@ pub fn calculate_volume_elements(
         }
     }
     if counted == 0 {
-        shape.iter().copied().product::<u64>() as usize
+        shape
+            .iter()
+            .copied()
+            .try_fold(1usize, |acc, x| acc.checked_mul(x as usize))
+            .unwrap_or(usize::MAX)
     } else {
         total_elements
     }

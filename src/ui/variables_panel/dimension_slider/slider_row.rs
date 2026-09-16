@@ -44,7 +44,8 @@ pub fn show_dimension_sliders(
                     1
                 }
             })
-            .product()
+            .try_fold(1u64, |acc, x| acc.checked_mul(x))
+            .unwrap_or(u64::MAX)
     } else {
         1
     };
@@ -55,7 +56,7 @@ pub fn show_dimension_sliders(
             RichText::new(format!(
                 "{} ({} cells)",
                 format_byte_size(requested_bytes),
-                crate::utils::format_count_metric(requested_cells as usize)
+                crate::utils::format_count_metric(requested_cells.min(usize::MAX as u64) as usize)
             ))
             .strong(),
         );
@@ -65,7 +66,7 @@ pub fn show_dimension_sliders(
 
     let total_2d_elements = calculate_selected_2d_elements(app);
     if total_2d_elements > crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS {
-        let data_mb = (total_2d_elements * 4) as f64 / (1024.0 * 1024.0);
+        let data_mb = (total_2d_elements as f64 * 4.0) / (1024.0 * 1024.0);
         ui.group(|ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.icon_colored(Icon::Bolt, 13.0, egui::Color32::from_rgb(100, 200, 255));
@@ -82,7 +83,7 @@ pub fn show_dimension_sliders(
         });
         ui.add_space(2.0);
     } else if total_2d_elements > crate::plots::common::MAX_2D_SURFACE_ELEMENTS {
-        let data_mb = (total_2d_elements * 4) as f64 / (1024.0 * 1024.0);
+        let data_mb = (total_2d_elements as f64 * 4.0) / (1024.0 * 1024.0);
         ui.group(|ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.icon_colored(Icon::Info, 13.0, egui::Color32::from_rgb(255, 180, 80));
@@ -102,7 +103,7 @@ pub fn show_dimension_sliders(
 
     let total_vol_elements = calculate_selected_volume_elements(app);
     if total_vol_elements > crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS {
-        let vol_mb = (total_vol_elements * 4) as f64 / (1024.0 * 1024.0);
+        let vol_mb = (total_vol_elements as f64 * 4.0) / (1024.0 * 1024.0);
         ui.group(|ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.icon_colored(Icon::Warning, 13.0, egui::Color32::from_rgb(255, 180, 80));
@@ -174,7 +175,14 @@ pub fn show_dimension_sliders(
 
             if app.dim_config[i].active {
                 let (mut start, mut end) = app.selected_dim_ranges[i];
-                double_slider_with_inputs(ui, dim_name, &mut start, &mut end, 0, dim_size - 1);
+                double_slider_with_inputs(
+                    ui,
+                    dim_name,
+                    &mut start,
+                    &mut end,
+                    0,
+                    dim_size.saturating_sub(1),
+                );
 
                 app.selected_dim_ranges[i] = (start, end);
                 if is_animated {

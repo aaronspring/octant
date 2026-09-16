@@ -8,15 +8,16 @@ pub fn show_plot_type_menu(app: &mut OctantApp, ui: &mut egui::Ui) {
         .or_else(|| app.selected_variable_info())
     {
         let has_3d = v.shape.len() >= 3 || v.dimension_names.len() >= 3;
-        let vol_elements = if app.volume_data.is_some() {
-            app.volume_data
-                .as_ref()
-                .map_or(0, |v| v.width * v.height * v.depth)
+        let vol_elements = if let Some(vdata) = &app.volume_data {
+            vdata
+                .width
+                .saturating_mul(vdata.height)
+                .saturating_mul(vdata.depth)
         } else {
             crate::ui::variables_panel::calculate_selected_volume_elements(app)
         };
         let size_ok = vol_elements <= crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS;
-        let mb = (vol_elements * 4) as f64 / (1024.0 * 1024.0);
+        let mb = (vol_elements as f64 * 4.0) / (1024.0 * 1024.0);
         (has_3d, size_ok, mb)
     } else {
         (false, false, 0.0)
@@ -43,13 +44,13 @@ pub fn show_plot_type_menu(app: &mut OctantApp, ui: &mut egui::Ui) {
             .is_none_or(|plots| plots.contains(&PlotType::Volume) && !is_discrete_grid);
 
     let total_2d_elements = if let Some(mdata) = &app.matrix_data {
-        mdata.width * mdata.height
+        mdata.width.saturating_mul(mdata.height)
     } else {
         crate::ui::variables_panel::calculate_selected_2d_elements(app)
     };
     let is_surface_allowed = total_2d_elements <= crate::plots::common::MAX_2D_SURFACE_ELEMENTS
         && !app.enable_pyramid_resampling;
-    let surface_mb = (total_2d_elements * 4) as f64 / (1024.0 * 1024.0);
+    let surface_mb = (total_2d_elements as f64 * 4.0) / (1024.0 * 1024.0);
 
     // Safety fallback: revert to 2D Plane only if the currently active plot lacks valid GPU data or pyramid is on
     if (app.enable_pyramid_resampling && app.active_plot_type != PlotType::Heatmap)
