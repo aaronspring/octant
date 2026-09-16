@@ -178,7 +178,7 @@ impl WasmIcechunkBlockStore {
         subset: &ArraySubset,
         mut on_progress: ProgressCallback<'_>,
     ) -> Result<(), BlockStoreError> {
-        let clean_var = var_name.trim_start_matches('/').to_string();
+        let clean_var = var_name.trim_start_matches('/');
         let var_path = format!("/{clean_var}");
 
         let array =
@@ -198,7 +198,7 @@ impl WasmIcechunkBlockStore {
                 .array_manifests
                 .read()
                 .unwrap_or_else(|p| p.into_inner());
-            let info = guard.get(&clean_var).ok_or_else(|| {
+            let info = guard.get(clean_var).ok_or_else(|| {
                 BlockStoreError::from(format!(
                     "No manifest metadata recorded for array '{clean_var}'"
                 ))
@@ -221,18 +221,21 @@ impl WasmIcechunkBlockStore {
 
         // Iterate over Cartesian product of chunk indices
         let mut current = chunk_ranges.iter().map(|r| r.start).collect::<Vec<u64>>();
+        let mut coords_u32 = Vec::with_capacity(rank);
+
         loop {
             let chunk_rel_key = array.chunk_key(&current);
-            let store_key_str = chunk_rel_key.as_str().to_string();
+            let store_key_str = chunk_rel_key.as_str();
 
-            if !self.inner.has_key(&store_key_str) {
-                let coords_u32 = current.iter().map(|&x| x as u32).collect::<Vec<u32>>();
-                let chunk_indices = ChunkIndices(coords_u32);
+            if !self.inner.has_key(store_key_str) {
+                coords_u32.clear();
+                coords_u32.extend(current.iter().map(|&x| x as u32));
+                let chunk_indices = ChunkIndices(coords_u32.clone());
 
                 let mut chunk_resolved = false;
 
-                // Search manifests for chunk location
-                for man_ref in &manifests {
+                // Search manifests in reverse order (newest/appended manifests first)
+                for man_ref in manifests.iter().rev() {
                     let man_id_str = man_ref.object_id.to_string();
 
                     // Check manifest cache or fetch & decompress
@@ -289,7 +292,7 @@ impl WasmIcechunkBlockStore {
                                     })?;
 
                             let bytes_len = chunk_bytes.len() as u64;
-                            self.inner.insert_key_bytes(&store_key_str, &chunk_bytes)?;
+                            self.inner.insert_key_bytes(store_key_str, &chunk_bytes)?;
 
                             if let Some(ref mut cb) = on_progress {
                                 cb(bytes_len);
@@ -316,7 +319,7 @@ impl WasmIcechunkBlockStore {
                                     })?;
 
                             let bytes_len = chunk_bytes.len() as u64;
-                            self.inner.insert_key_bytes(&store_key_str, &chunk_bytes)?;
+                            self.inner.insert_key_bytes(store_key_str, &chunk_bytes)?;
 
                             if let Some(ref mut cb) = on_progress {
                                 cb(bytes_len);
@@ -327,7 +330,7 @@ impl WasmIcechunkBlockStore {
                         }
                         Ok(ChunkPayload::Inline(bytes)) => {
                             let bytes_len = bytes.len() as u64;
-                            self.inner.insert_key_bytes(&store_key_str, &bytes)?;
+                            self.inner.insert_key_bytes(store_key_str, &bytes)?;
 
                             if let Some(ref mut cb) = on_progress {
                                 cb(bytes_len);
