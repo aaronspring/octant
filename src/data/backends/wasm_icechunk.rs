@@ -4,18 +4,22 @@
 //! Tokio, MIO, or native socket dependencies.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-#[cfg(target_arch = "wasm32")]
-use std::sync::RwLock;
+use std::io::Read;
+use std::sync::{Arc, RwLock};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Mutex, OnceLock};
 
-use std::io::Read;
-
 #[cfg(target_arch = "wasm32")]
 use icechunk_format::ChunkIndices;
+use icechunk_format::format_constants::{
+    CompressionAlgorithmBin, ICECHUNK_FILE_HEADER_LEN, ICECHUNK_FORMAT_MAGIC_BYTES, SpecVersionBin,
+    parse_file_header,
+};
 #[cfg(target_arch = "wasm32")]
-use icechunk_format::manifest::{ChunkPayload, Manifest, ManifestRef};
+use icechunk_format::manifest::ChunkPayload;
+use icechunk_format::manifest::{Manifest, ManifestRef};
+#[cfg(target_arch = "wasm32")]
+use icechunk_format::repo_info::RepoInfo;
 #[cfg(target_arch = "wasm32")]
 use icechunk_format::snapshot::{NodeData, Snapshot};
 use zarrs::array::ArraySubset;
@@ -45,11 +49,17 @@ thread_local! {
 static WASM_ICECHUNK_STORES_DESKTOP: OnceLock<Mutex<HashMap<String, Arc<WasmIcechunkBlockStore>>>> =
     OnceLock::new();
 
-/// Converts an S3 URI (s3://bucket/key) into an HTTPS URL for browser fetching.
+/// Converts an S3 or Virtual Chunk Container URI into an HTTPS URL for browser fetching.
 pub fn s3_to_https(location: &str) -> String {
     if let Some(rest) = location.strip_prefix("s3://") {
         if let Some((bucket, key)) = rest.split_once('/') {
             format!("https://{bucket}.s3.amazonaws.com/{key}")
+        } else {
+            format!("https://{rest}.s3.amazonaws.com")
+        }
+    } else if let Some(rest) = location.strip_prefix("vcc://") {
+        if let Some((container, key)) = rest.split_once('/') {
+            format!("https://{container}.s3.amazonaws.com/{key}")
         } else {
             format!("https://{rest}.s3.amazonaws.com")
         }
@@ -65,34 +75,41 @@ fn try_decompress_zstd(data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Decompresses raw Icechunk payloads (Zstandard FlatBuffers or uncompressed).
-pub fn decompress_payload(data: &[u8]) -> Result<Vec<u8>, BlockStoreError> {
+/// Decompresses an Icechunk binary file, respecting the 39-byte header and spec version.
+pub fn decompress_icechunk_file(data: &[u8]) -> Result<(SpecVersionBin, Vec<u8>), BlockStoreError> {
     if data.is_empty() {
-        return Ok(Vec::new());
+        return Ok((SpecVersionBin::V1, Vec::new()));
     }
 
-    // 1. Try direct Zstandard decompression
+    // 1. Check for standard 39-byte Icechunk binary file header
+    if data.len() >= ICECHUNK_FILE_HEADER_LEN
+        && data.starts_with(ICECHUNK_FORMAT_MAGIC_BYTES)
+        && let Ok(header) = parse_file_header(data)
+    {
+        let payload = &data[ICECHUNK_FILE_HEADER_LEN..];
+        let decompressed = match header.compression {
+            CompressionAlgorithmBin::Zstd => try_decompress_zstd(payload).ok_or_else(|| {
+                BlockStoreError::from("Failed to decompress Zstd payload from Icechunk file")
+            })?,
+            CompressionAlgorithmBin::None => payload.to_vec(),
+        };
+        return Ok((header.spec_version, decompressed));
+    }
+
+    // 2. Direct Zstandard fallback if raw compressed stream
     if let Some(decompressed) = try_decompress_zstd(data) {
-        return Ok(decompressed);
-    }
-
-    // 2. Try skipping 12-byte or 36-byte Icechunk format header if present
-    if data.len() > 12
-        && let Some(decompressed) = try_decompress_zstd(&data[12..])
-    {
-        return Ok(decompressed);
-    }
-    if data.len() > 36
-        && let Some(decompressed) = try_decompress_zstd(&data[36..])
-    {
-        return Ok(decompressed);
+        return Ok((SpecVersionBin::V1, decompressed));
     }
 
     // 3. Fall back to raw payload if uncompressed
-    Ok(data.to_vec())
+    Ok((SpecVersionBin::V1, data.to_vec()))
 }
 
-#[cfg(target_arch = "wasm32")]
+/// Decompresses raw Icechunk payloads (FlatBuffers or Zstandard).
+pub fn decompress_payload(data: &[u8]) -> Result<Vec<u8>, BlockStoreError> {
+    decompress_icechunk_file(data).map(|(_, bytes)| bytes)
+}
+
 pub struct ArrayManifestInfo {
     pub node_id: icechunk_format::ObjectId<8, icechunk_format::NodeTag>,
     pub manifests: Vec<ManifestRef>,
@@ -101,9 +118,7 @@ pub struct ArrayManifestInfo {
 pub struct WasmIcechunkBlockStore {
     pub base_url: String,
     pub inner: Arc<WasmZarrBlockStore>,
-    #[cfg(target_arch = "wasm32")]
     pub array_manifests: RwLock<HashMap<String, ArrayManifestInfo>>,
-    #[cfg(target_arch = "wasm32")]
     pub cached_manifests: RwLock<HashMap<String, Arc<Manifest>>>,
 }
 
@@ -147,6 +162,8 @@ impl WasmIcechunkBlockStore {
             let new_store = Arc::new(Self {
                 base_url: clean_url.clone(),
                 inner,
+                array_manifests: RwLock::new(HashMap::new()),
+                cached_manifests: RwLock::new(HashMap::new()),
             });
             guard.insert(clean_url, new_store.clone());
             new_store
@@ -219,15 +236,17 @@ impl WasmIcechunkBlockStore {
                     let man_id_str = man_ref.object_id.to_string();
 
                     // Check manifest cache or fetch & decompress
-                    let manifest_arc = {
-                        let mut cached_guard = self
+                    let cached_opt = {
+                        let guard = self
                             .cached_manifests
-                            .write()
+                            .read()
                             .unwrap_or_else(|p| p.into_inner());
+                        guard.get(&man_id_str).cloned()
+                    };
 
-                        if let Some(m) = cached_guard.get(&man_id_str) {
-                            m.clone()
-                        } else {
+                    let manifest_arc = match cached_opt {
+                        Some(m) => m,
+                        None => {
                             let man_url = format!("{}/manifests/{man_id_str}", self.base_url);
                             log::info!("[WASM Icechunk] Fetching manifest: {man_url}");
 
@@ -235,22 +254,25 @@ impl WasmIcechunkBlockStore {
                                 format!("Failed fetching manifest '{man_url}': {e}")
                             })?;
 
-                            let decomp_man = decompress_payload(&raw_man_bytes)?;
+                            let (_spec, decomp_man) = decompress_icechunk_file(&raw_man_bytes)?;
                             let decoded_man = Manifest::from_buffer(decomp_man).map_err(|e| {
                                 format!("Failed parsing Icechunk manifest '{man_id_str}': {e:?}")
                             })?;
 
                             let arc_m = Arc::new(decoded_man);
-                            cached_guard.insert(man_id_str.clone(), arc_m.clone());
+                            let mut guard = self
+                                .cached_manifests
+                                .write()
+                                .unwrap_or_else(|p| p.into_inner());
+                            guard.insert(man_id_str.clone(), arc_m.clone());
                             arc_m
                         }
                     };
 
                     match manifest_arc.get_chunk_payload(&node_id, &chunk_indices) {
                         Ok(ChunkPayload::Virtual(vchunk)) => {
-                            let loc_str = format!("{:?}", vchunk.location);
-                            let clean_loc = loc_str.trim_matches('"').to_string();
-                            let target_url = s3_to_https(&clean_loc);
+                            let location_url = vchunk.location.url();
+                            let target_url = s3_to_https(location_url);
                             log::info!(
                                 "[WASM Icechunk] Fetching virtual chunk from '{target_url}' (offset: {}, len: {})",
                                 vchunk.offset,
@@ -404,61 +426,96 @@ pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, 
 
     let store = WasmIcechunkBlockStore::get_or_create(clean_url);
 
-    // 1. Fetch branch ref (main or master)
-    let mut ref_bytes = fetch_url_bytes(&format!("{clean_url}/refs/branches/main"))
-        .await
-        .ok();
-    if ref_bytes.is_none() {
-        ref_bytes = fetch_url_bytes(&format!("{clean_url}/refs/branches/master"))
-            .await
-            .ok();
-    }
-    if ref_bytes.is_none() {
-        ref_bytes = fetch_url_bytes(&format!("{clean_url}/refs/tags/latest"))
-            .await
-            .ok();
-    }
+    // 1. Attempt Icechunk V2 discovery via RepoInfo (/repo)
+    let repo_url = format!("{clean_url}/repo");
+    let mut resolved_snap_id: Option<(String, SpecVersionBin)> = None;
 
-    let snap_id = if let Some(bytes) = ref_bytes {
-        let text = String::from_utf8_lossy(&bytes).trim().to_string();
-        // If ref payload is JSON or quoted, extract ID
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-            val.as_str()
-                .or_else(|| val.get("id").and_then(|v| v.as_str()))
-                .or_else(|| val.get("snapshot_id").and_then(|v| v.as_str()))
-                .map(|s| s.to_string())
-                .unwrap_or(text)
-        } else {
-            text.trim_matches('"').to_string()
+    if let Ok(raw_repo_bytes) = fetch_url_bytes(&repo_url).await
+        && let Ok((spec_version, decomp_repo)) = decompress_icechunk_file(&raw_repo_bytes)
+        && let Ok(repo_info) = RepoInfo::from_buffer(decomp_repo)
+    {
+        if let Ok(branches) = repo_info.branches() {
+            for (b_name, snap_id) in branches {
+                if b_name == "main" || b_name == "master" {
+                    resolved_snap_id = Some((snap_id.to_string(), spec_version));
+                    break;
+                }
+                if resolved_snap_id.is_none() {
+                    resolved_snap_id = Some((snap_id.to_string(), spec_version));
+                }
+            }
         }
-    } else {
-        return Err(format!(
-            "Failed to find Icechunk branch ref at '{clean_url}/refs/branches/main'. Ensure the server allows CORS."
-        ));
-    };
+        if resolved_snap_id.is_none()
+            && let Ok(mut tags) = repo_info.tags()
+            && let Some((_tag_name, snap_id)) = tags.next()
+        {
+            resolved_snap_id = Some((snap_id.to_string(), spec_version));
+        }
+    }
 
-    log::info!("[WASM Icechunk] Resolved snapshot ID: {snap_id}");
+    // 2. Fallback to Icechunk V1 discovery via /refs/branch.main/ref.json
+    if resolved_snap_id.is_none() {
+        let mut ref_bytes = fetch_url_bytes(&format!("{clean_url}/refs/branch.main/ref.json"))
+            .await
+            .ok();
+        if ref_bytes.is_none() {
+            ref_bytes = fetch_url_bytes(&format!("{clean_url}/refs/branch.master/ref.json"))
+                .await
+                .ok();
+        }
+        if ref_bytes.is_none() {
+            ref_bytes = fetch_url_bytes(&format!("{clean_url}/refs/tag.latest/ref.json"))
+                .await
+                .ok();
+        }
 
-    // 2. Fetch snapshot file
+        if let Some(bytes) = ref_bytes {
+            let text = String::from_utf8_lossy(&bytes).trim().to_string();
+            let snap_id = if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                val.get("snapshot")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| val.as_str())
+                    .or_else(|| val.get("id").and_then(|v| v.as_str()))
+                    .map(|s| s.to_string())
+                    .unwrap_or(text)
+            } else {
+                text.trim_matches('"').to_string()
+            };
+            resolved_snap_id = Some((snap_id, SpecVersionBin::V1));
+        }
+    }
+
+    let (snap_id, spec_version) = resolved_snap_id.ok_or_else(|| {
+        format!(
+            "Failed to find Icechunk branch reference at '{clean_url}/repo' (V2) or '{clean_url}/refs/branch.main/ref.json' (V1). Ensure the server allows CORS."
+        )
+    })?;
+
+    log::info!("[WASM Icechunk] Resolved snapshot ID: {snap_id} (spec: {spec_version:?})");
+
+    // 3. Fetch snapshot file
     let snap_url = format!("{clean_url}/snapshots/{snap_id}");
     let raw_snap_bytes = fetch_url_bytes(&snap_url)
         .await
         .map_err(|e| format!("Failed fetching snapshot from '{snap_url}': {e}"))?;
 
-    let decomp_snap = decompress_payload(&raw_snap_bytes)
+    let (snap_spec_version, decomp_snap) = decompress_icechunk_file(&raw_snap_bytes)
         .map_err(|e| format!("Failed decompressing snapshot: {e}"))?;
 
-    let spec_version = 1u8
-        .try_into()
-        .map_err(|e| format!("Invalid spec version: {e:?}"))?;
+    let actual_version =
+        if snap_spec_version == SpecVersionBin::V1 && spec_version != SpecVersionBin::V1 {
+            spec_version
+        } else {
+            snap_spec_version
+        };
 
-    let snapshot = Snapshot::from_buffer(spec_version, decomp_snap)
+    let snapshot = Snapshot::from_buffer(actual_version, decomp_snap)
         .map_err(|e| format!("Failed parsing Icechunk snapshot FlatBuffers: {e:?}"))?;
 
     let mut variables = Vec::new();
     let mut manifest_map = HashMap::new();
 
-    // 3. Process nodes in snapshot
+    // 4. Process nodes in snapshot
     for node_res in snapshot.iter() {
         let node = node_res.map_err(|e| format!("Failed iterating snapshot nodes: {e:?}"))?;
         let node_path = node.path.to_string();
@@ -551,6 +608,32 @@ pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, 
         .write()
         .unwrap_or_else(|p| p.into_inner()) = manifest_map;
 
+    // 5. Preload 1D coordinate arrays to populate dimension_coordinates
+    let coord_candidates: Vec<String> = variables
+        .iter()
+        .filter(|v| v.shape.len() == 1 && v.shape.first().copied().unwrap_or(0) <= 10000)
+        .map(|v| v.name.clone())
+        .collect();
+
+    for coord_name in &coord_candidates {
+        if let Some(var_info) = variables.iter().find(|v| &v.name == coord_name) {
+            let count = var_info.shape.first().copied().unwrap_or(0);
+            if count > 0 {
+                let subset = ArraySubset::new_with_shape(vec![count]);
+                let _ = store
+                    .preload_chunks_for_subset(coord_name, &subset, None)
+                    .await;
+            }
+        }
+    }
+
+    let dimension_coordinates =
+        crate::data::backends::coord_bounds::fetch_all_dimension_coordinates_for_variables(
+            store.inner.memory_store.clone(),
+            &variables,
+            Some(clean_url),
+        );
+
     let dataset_name = clean_url
         .split('/')
         .next_back()
@@ -561,7 +644,7 @@ pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, 
         name: dataset_name,
         store_type: "icechunk".to_string(),
         variables,
-        dimension_coordinates: HashMap::new(),
+        dimension_coordinates,
     };
 
     *store
@@ -668,4 +751,71 @@ pub async fn load_one_icechunk_wasm_with_progress(
     request
         .store
         .fetch_with_progress(&request.slice, on_progress)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_s3_to_https_conversions() {
+        assert_eq!(
+            s3_to_https("s3://my-bucket/path/to/chunk"),
+            "https://my-bucket.s3.amazonaws.com/path/to/chunk"
+        );
+        assert_eq!(
+            s3_to_https("s3://simple-bucket"),
+            "https://simple-bucket.s3.amazonaws.com"
+        );
+        assert_eq!(
+            s3_to_https("vcc://container-bucket/virtual/key.nc"),
+            "https://container-bucket.s3.amazonaws.com/virtual/key.nc"
+        );
+        assert_eq!(
+            s3_to_https("https://direct.domain.com/data.zarr"),
+            "https://direct.domain.com/data.zarr"
+        );
+    }
+
+    #[test]
+    fn test_decompress_empty_and_raw() {
+        let empty: &[u8] = &[];
+        let (spec, decomp) = decompress_icechunk_file(empty).expect("empty succeeds");
+        assert_eq!(spec, SpecVersionBin::V1);
+        assert!(decomp.is_empty());
+
+        let raw = b"hello uncompressed icechunk data";
+        let (spec, decomp) = decompress_icechunk_file(raw).expect("raw succeeds");
+        assert_eq!(spec, SpecVersionBin::V1);
+        assert_eq!(decomp, raw);
+    }
+
+    #[test]
+    fn test_decompress_with_39_byte_header_uncompressed() {
+        // Build 39-byte header: magic(12) + impl(24) + spec(1) + file_type(1) + comp(1)
+        let mut data = Vec::with_capacity(ICECHUNK_FILE_HEADER_LEN + 10);
+        data.extend_from_slice(ICECHUNK_FORMAT_MAGIC_BYTES); // 12 bytes
+        data.extend_from_slice(b"ic-2.1.2                "); // 24 bytes
+        data.push(SpecVersionBin::V2 as u8); // spec version 2
+        data.push(4); // file type RepoInfo
+        data.push(CompressionAlgorithmBin::None as u8); // uncompressed
+        data.extend_from_slice(b"sample-uncompressed-body");
+
+        assert_eq!(data.len(), ICECHUNK_FILE_HEADER_LEN + 24);
+
+        let (spec, decomp) = decompress_icechunk_file(&data).expect("header parse succeeds");
+        assert_eq!(spec, SpecVersionBin::V2);
+        assert_eq!(decomp, b"sample-uncompressed-body");
+    }
+
+    #[test]
+    fn test_v1_ref_json_parsing() {
+        let json_data = r#"{"snapshot": "000G40R40M30E209185G"}"#;
+        let val = serde_json::from_str::<serde_json::Value>(json_data).expect("json parse");
+        let snap_id = val
+            .get("snapshot")
+            .and_then(|v| v.as_str())
+            .expect("snapshot field");
+        assert_eq!(snap_id, "000G40R40M30E209185G");
+    }
 }
