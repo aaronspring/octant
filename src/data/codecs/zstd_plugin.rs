@@ -136,13 +136,17 @@ impl BytesToBytesCodecTraits for RuzstdCodec {
     fn decode<'a>(
         &self,
         value: ArrayBytesRaw<'a>,
-        _decoded_representation: &BytesRepresentation,
+        decoded_representation: &BytesRepresentation,
         _options: &CodecOptions,
     ) -> Result<ArrayBytesRaw<'a>, CodecError> {
         let mut decoder = ruzstd::decoding::StreamingDecoder::new(&value[..]).map_err(|e| {
             CodecError::Other(format!("Ruzstd streaming decoder init failed: {e:?}"))
         })?;
-        let mut out = Vec::new();
+        let mut out = match decoded_representation {
+            BytesRepresentation::FixedSize(size) => Vec::with_capacity(*size as usize),
+            BytesRepresentation::BoundedSize(size) => Vec::with_capacity(*size as usize),
+            BytesRepresentation::UnboundedSize => Vec::new(),
+        };
         decoder
             .read_to_end(&mut out)
             .map_err(|e| CodecError::Other(format!("Ruzstd decompression failed: {e:?}")))?;

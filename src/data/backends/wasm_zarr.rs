@@ -640,23 +640,7 @@ pub async fn load_one_wasm_with_progress(
         })
         .unwrap_or_default();
 
-    let rank = request.slice.selections.len();
-    let mut ranges = Vec::with_capacity(rank);
-
-    for (i, sel) in request.slice.selections.iter().enumerate() {
-        let dim_len = shape.get(i).copied().unwrap_or(1000) as usize;
-        let (start, end) = match *sel {
-            crate::data::slice_request::DimensionSelection::Index(idx) => {
-                (idx, idx.saturating_add(1))
-            }
-            crate::data::slice_request::DimensionSelection::Range { start, end } => (start, end),
-        };
-        let start = start.min(dim_len.saturating_sub(1));
-        let end = end.max(start + 1).min(dim_len);
-        ranges.push(start as u64..end as u64);
-    }
-
-    let subset = ArraySubset::new_with_ranges(&ranges);
+    let subset = request.slice.to_array_subset(&shape);
     log::info!(
         "[WASM Zarr] Preloading chunks for '{}', subset: {:?}",
         request.slice.variable,

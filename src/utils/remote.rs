@@ -19,20 +19,43 @@ pub struct ParsedStorageUrl {
     pub force_path_style: bool,
 }
 
+/// Converts an S3 or Virtual Chunk Container URI into an HTTPS URL for browser fetching.
+pub fn s3_to_https(location: &str) -> String {
+    let clean = location.trim_start_matches("icechunk+");
+    if let Some(rest) = clean.strip_prefix("s3://") {
+        if let Some((bucket, key)) = rest.split_once('/') {
+            format!("https://{bucket}.s3.amazonaws.com/{key}")
+        } else {
+            format!("https://{rest}.s3.amazonaws.com")
+        }
+    } else if let Some(rest) = clean.strip_prefix("vcc://") {
+        if let Some((container, key)) = rest.split_once('/') {
+            format!("https://{container}.s3.amazonaws.com/{key}")
+        } else {
+            format!("https://{rest}.s3.amazonaws.com")
+        }
+    } else {
+        clean.to_string()
+    }
+}
+
 /// Parses any S3 URL, virtual-hosted S3 endpoint, Source Cooperative endpoint,
 /// or custom S3/HTTP object store address into structured components.
 pub fn parse_remote_storage_url(
     url: &str,
 ) -> Result<ParsedStorageUrl, Box<dyn Error + Send + Sync>> {
-    let trimmed = url.trim();
+    let trimmed = url.trim().trim_start_matches("icechunk+");
     if trimmed.is_empty() {
         return Err("Storage URL is empty".into());
     }
 
-    if let Some(s3_path) = trimmed.strip_prefix("s3://") {
+    if let Some(s3_path) = trimmed
+        .strip_prefix("s3://")
+        .or_else(|| trimmed.strip_prefix("vcc://"))
+    {
         let parts: Vec<&str> = s3_path.split('/').filter(|s| !s.is_empty()).collect();
         if parts.is_empty() {
-            return Err("Missing bucket name in s3:// URL".into());
+            return Err("Missing bucket name in s3:// or vcc:// URL".into());
         }
         let bucket = parts[0].to_string();
         let prefix = if parts.len() > 1 {
@@ -225,6 +248,30 @@ pub fn register_standard_virtual_chunk_containers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_s3_to_https_conversions() {
+        assert_eq!(
+            s3_to_https("s3://my-bucket/path/to/chunk"),
+            "https://my-bucket.s3.amazonaws.com/path/to/chunk"
+        );
+        assert_eq!(
+            s3_to_https("s3://simple-bucket"),
+            "https://simple-bucket.s3.amazonaws.com"
+        );
+        assert_eq!(
+            s3_to_https("vcc://container-bucket/virtual/key.nc"),
+            "https://container-bucket.s3.amazonaws.com/virtual/key.nc"
+        );
+        assert_eq!(
+            s3_to_https("https://direct.domain.com/data.zarr"),
+            "https://direct.domain.com/data.zarr"
+        );
+        assert_eq!(
+            s3_to_https("icechunk+s3://icechunk-bucket/repo"),
+            "https://icechunk-bucket.s3.amazonaws.com/repo"
+        );
+    }
 
     #[test]
     fn test_parse_aws_virtual_hosted_url() {
