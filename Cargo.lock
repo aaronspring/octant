@@ -1180,6 +1180,7 @@ dependencies = [
 [[package]]
 name = "blusc"
 version = "0.0.6"
+source = "git+https://github.com/lazarusA/blusc?branch=la%2Ffix_linker#6c928a6325a6b3edea939866055ad10822372806"
 dependencies = [
  "flate2",
  "lz4_flex",
@@ -1679,7 +1680,7 @@ dependencies = [
  "openssl-sys",
  "pkg-config",
  "vcpkg",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -23,24 +23,20 @@ pub const IDENTIFIER: &str = "blosc";
 static ALIASES_V3: OnceLock<RwLock<ExtensionAliasesConfig>> = OnceLock::new();
 static ALIASES_V2: OnceLock<RwLock<ExtensionAliasesConfig>> = OnceLock::new();
 
+fn make_aliases_config() -> RwLock<ExtensionAliasesConfig> {
+    RwLock::new(ExtensionAliasesConfig::new(
+        IDENTIFIER,
+        vec![Cow::Borrowed("numcodecs.blosc")],
+        Vec::new(),
+    ))
+}
+
 fn get_aliases_v3() -> &'static RwLock<ExtensionAliasesConfig> {
-    ALIASES_V3.get_or_init(|| {
-        RwLock::new(ExtensionAliasesConfig::new(
-            IDENTIFIER,
-            vec![Cow::Borrowed("numcodecs.blosc")],
-            Vec::new(),
-        ))
-    })
+    ALIASES_V3.get_or_init(make_aliases_config)
 }
 
 fn get_aliases_v2() -> &'static RwLock<ExtensionAliasesConfig> {
-    ALIASES_V2.get_or_init(|| {
-        RwLock::new(ExtensionAliasesConfig::new(
-            IDENTIFIER,
-            vec![Cow::Borrowed("numcodecs.blosc")],
-            Vec::new(),
-        ))
-    })
+    ALIASES_V2.get_or_init(make_aliases_config)
 }
 
 /// Pure Rust Blosc codec using `blusc`.
@@ -143,8 +139,7 @@ impl BytesToBytesCodecTraits for BluscCodec {
         _options: &CodecOptions,
     ) -> Result<ArrayBytesRaw<'a>, CodecError> {
         let decompressed = blusc::convenience::blosc2_decompress(&value)
-            .or_else(|_| blusc::convenience::blosc1_decompress(&value))
-            .map_err(|e| CodecError::Other(format!("Blusc decompression failed: {e:?}")))?;
+            .map_err(|e| CodecError::Other(format!("Blusc decompression failed: {e}")))?;
 
         Ok(decompressed.into())
     }
