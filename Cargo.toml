@@ -36,6 +36,7 @@ flate2 = "1.0"
 inventory = "0.3"
 web-time = "1.1"
 blusc = "0.0.6"
+ruzstd = "0.8"
 zarrs_metadata = "0.7"
 zarrs_codec = "0.2"
 zarrs_plugin = "0.4"
@@ -63,6 +64,9 @@ zarrs = { version = "0.23", default-features = false, features = ["ndarray", "cr
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "Response", "Request", "RequestInit", "Headers", "RequestMode"] }
 js-sys = "0.3"
 blusc = "0.0.6"
+getrandom = { version = "0.4", features = ["wasm_js"] }
+icechunk-format = { version = "2.1.2", default-features = false }
+icechunk-types = { version = "2.1.2", default-features = false }
 
 [dev-dependencies]
 blusc = "0.0.6"
