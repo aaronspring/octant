@@ -68,7 +68,4 @@ blusc = "0.0.6"
 blusc = "0.0.6"
 
 [patch.crates-io]
-blusc = { path = "dev/blusc" }
-
-
-
+blusc = { git = "https://github.com/lazarusA/blusc", branch = "la/fix_linker" }
