@@ -209,7 +209,7 @@ impl WasmIcechunkBlockStore {
         // Calculate chunk index ranges per dimension
         let mut chunk_ranges = Vec::with_capacity(rank);
         for (i, dim_len) in chunk_dims.iter().enumerate() {
-            let c_len = dim_len.get();
+            let c_len = dim_len.get().max(1);
             let sel_start = subset.start()[i];
             let sel_shape = subset.shape()[i];
             let sel_end = sel_start + sel_shape;
@@ -556,14 +556,16 @@ pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, 
                 let dim_names_vec: Vec<String> = dimension_names
                     .map(|dims| {
                         dims.into_iter()
-                            .map(|d| format!("{d:?}").trim_matches('"').to_string())
+                            .map(|d| match d {
+                                icechunk_format::snapshot::DimensionName::Name(n) => n,
+                                icechunk_format::snapshot::DimensionName::NotSpecified => {
+                                    String::new()
+                                }
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
-                let shape_u64: Vec<u64> = shape
-                    .iter()
-                    .map(|d| format!("{d:?}").parse().unwrap_or(0))
-                    .collect();
+                let shape_u64: Vec<u64> = shape.iter().map(|d| d.array_length()).collect();
 
                 // Parse VariableInfo from Zarr metadata or attributes
                 let mut var_info_opt = None;
