@@ -48,6 +48,12 @@ pub fn is_irregular_series(coords: &[f64]) -> bool {
 pub fn detect_healpix_ordering(
     attributes: &std::collections::HashMap<String, String>,
 ) -> super::healpix::HealpixOrder {
+    if let Some(dggs) = super::dggs::DggsMetadata::from_attributes(attributes)
+        && dggs.is_healpix()
+    {
+        return dggs.healpix_ordering();
+    }
+
     let is_nested = attributes
         .get("healpix_nest")
         .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
@@ -78,9 +84,20 @@ pub fn detect_grid_from_block(
     width: usize,
     height: usize,
 ) -> CoordinateGrid {
-    let is_healpix_x = super::naming::is_healpix_dim_name(x_name);
-    let is_healpix_y = super::naming::is_healpix_dim_name(y_name);
-    let is_healpix_attr = block.attributes.contains_key("healpix_zoom")
+    let dggs_opt = super::dggs::DggsMetadata::from_attributes(&block.attributes);
+    let is_dggs_healpix = dggs_opt.as_ref().is_some_and(|d| d.is_healpix());
+
+    let is_healpix_x = super::naming::is_healpix_dim_name(x_name)
+        || dggs_opt
+            .as_ref()
+            .is_some_and(|d| d.spatial_dimension.eq_ignore_ascii_case(x_name));
+    let is_healpix_y = super::naming::is_healpix_dim_name(y_name)
+        || dggs_opt
+            .as_ref()
+            .is_some_and(|d| d.spatial_dimension.eq_ignore_ascii_case(y_name));
+
+    let is_healpix_attr = is_dggs_healpix
+        || block.attributes.contains_key("healpix_zoom")
         || block.attributes.contains_key("healpix_nest")
         || block.attributes.contains_key("healpix_order")
         || block
@@ -93,8 +110,16 @@ pub fn detect_grid_from_block(
             .is_some_and(|g| super::naming::contains_ascii_case_insensitive(g, "nested"));
 
     let npix = if height == 1 { width } else { width * height };
+    let nside_opt = if let Some(ref dggs) = dggs_opt
+        && dggs.is_healpix()
+    {
+        dggs.healpix_nside(npix)
+    } else {
+        super::healpix::npix_to_nside(npix)
+    };
+
     if (is_healpix_x || is_healpix_y || is_healpix_attr)
-        && let Some(nside) = super::healpix::npix_to_nside(npix)
+        && let Some(nside) = nside_opt
     {
         let ordering = detect_healpix_ordering(&block.attributes);
 

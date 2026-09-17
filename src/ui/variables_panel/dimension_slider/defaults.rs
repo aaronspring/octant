@@ -24,13 +24,20 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
         app.selected_dim_ranges.push((0, range_end));
     }
 
+    let dggs_opt =
+        crate::data::coordinates::dggs::DggsMetadata::from_attributes(&var_info.attributes);
+
     if rank == 1 {
         let dim_name = var_info
             .dimension_names
             .first()
             .map(|s| s.as_str())
             .unwrap_or("");
-        let is_grid = crate::data::coordinates::naming::is_healpix_dim_name(dim_name);
+        let is_grid = if let Some(ref dggs) = dggs_opt {
+            dggs.is_healpix() && dggs.spatial_dimension.eq_ignore_ascii_case(dim_name)
+        } else {
+            crate::data::coordinates::naming::is_healpix_dim_name(dim_name)
+        };
         app.dim_config[0].spatial = if is_grid {
             SpatialRole::Grid
         } else {
@@ -42,13 +49,19 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
         return;
     }
 
-    // Check if this variable has a discrete global grid / HEALPix dimension
+    // Check if this variable has a discrete global grid / HEALPix dimension via DGGS or naming heuristics
     let healpix_dim_idx = (0..rank).find(|&i| {
         let name = var_info
             .dimension_names
             .get(i)
             .map(|s| s.as_str())
             .unwrap_or("");
+        if let Some(ref dggs) = dggs_opt
+            && dggs.is_healpix()
+            && dggs.spatial_dimension.eq_ignore_ascii_case(name)
+        {
+            return true;
+        }
         crate::data::coordinates::naming::is_healpix_dim_name(name)
     });
 

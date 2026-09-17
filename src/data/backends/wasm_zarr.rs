@@ -22,7 +22,6 @@ use crate::data::slice_request::SliceRequest;
 use crate::data::{DatasetMetadata, VariableInfo};
 use crate::utils::metadata::{
     ParsedCfAttributes, open_or_instantiate_array_normalized, variable_info_from_array,
-    variable_info_from_node_metadata,
 };
 use crate::utils::units::calculate_variable_size_bytes;
 
@@ -571,14 +570,15 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
         let _ = store.insert_key_bytes("zarr.json", &v3_bytes);
 
         if let Ok(group) = Group::open(store.memory_store.clone(), "/") {
-            let mut variables = Vec::new();
-            if let Some(ConsolidatedMetadata { metadata, .. }) = group.consolidated_metadata() {
-                for (name, node_meta) in metadata {
-                    if let Some(var_info) = variable_info_from_node_metadata(&name, &node_meta) {
-                        variables.push(var_info);
-                    }
-                }
-            }
+            let variables = if let Some(ConsolidatedMetadata { metadata, .. }) =
+                group.consolidated_metadata()
+            {
+                crate::utils::metadata::extract_store_variables_from_consolidated_metadata(
+                    &metadata,
+                )
+            } else {
+                Vec::new()
+            };
 
             if !variables.is_empty() {
                 return Ok(store.finalize_metadata(variables, clean_url).await);

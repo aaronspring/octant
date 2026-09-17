@@ -1,6 +1,7 @@
 //! Geographic and Cartesian coordinate mapping system.
 
 pub mod detection;
+pub mod dggs;
 pub mod healpix;
 mod impl_topology;
 pub mod lut;
@@ -13,7 +14,8 @@ pub mod topologies;
 pub mod topology;
 pub mod types;
 
-pub use detection::{detect_grid, detect_grid_from_block};
+pub use detection::{detect_grid, detect_grid_from_block, detect_healpix_ordering};
+pub use dggs::{DggsEllipsoid, DggsMetadata};
 pub use healpix::{
     HealpixOrder, ang2pix_ring, npix_to_nside, nside_to_npix, pix_boundaries, pix2ang_ring,
     pix2ring,
