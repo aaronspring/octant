@@ -236,7 +236,8 @@ pub fn get_cached_coord_values_scoped(
     let clean_dim = dim_name.trim().to_lowercase();
     let exact_key = format!("{}:{}:{}", clean_url, group_scope.unwrap_or(""), clean_dim);
 
-    if let Ok(cache) = cache_lock.read() {
+    {
+        let cache = cache_lock.read().unwrap_or_else(|p| p.into_inner());
         if let Some(values) = cache.get(&exact_key) {
             return values.clone();
         }
@@ -264,9 +265,8 @@ pub fn get_cached_coord_values_scoped(
         dim_idx,
         total_dims,
     );
-    if let Ok(mut cache) = cache_lock.write() {
-        cache.insert(exact_key, values.clone());
-    }
+    let mut cache = cache_lock.write().unwrap_or_else(|p| p.into_inner());
+    cache.insert(exact_key, values.clone());
     values
 }
 
