@@ -71,4 +71,17 @@ impl SliceRequest {
             acc.saturating_mul(end.saturating_sub(start).max(1))
         })
     }
+
+    /// Converts the slice selections into a Zarr `ArraySubset` clamped against dimension lengths.
+    pub fn to_array_subset(&self, shape: &[u64]) -> zarrs::array::ArraySubset {
+        let mut ranges = Vec::with_capacity(self.selections.len());
+        for (i, sel) in self.selections.iter().enumerate() {
+            let dim_len = shape.get(i).copied().unwrap_or(1000) as usize;
+            let (start, end) = sel.bounds();
+            let start = start.min(dim_len.saturating_sub(1));
+            let end = end.max(start + 1).min(dim_len);
+            ranges.push(start as u64..end as u64);
+        }
+        zarrs::array::ArraySubset::new_with_ranges(&ranges)
+    }
 }

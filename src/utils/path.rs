@@ -45,15 +45,20 @@ pub fn infer_store_kind_from_target(target: &str) -> Result<crate::app::StoreKin
         return Ok(StoreKind::ProceduralRandom);
     }
 
-    // 2. Remote URIs (HTTP / HTTPS / S3 / GS / AZ)
-    if trimmed.starts_with("http://")
+    // 2. Remote URIs (HTTP / HTTPS / S3 / GS / AZ / VCC / ICECHUNK+)
+    if trimmed.starts_with("icechunk+")
+        || trimmed.starts_with("vcc://")
+        || trimmed.starts_with("http://")
         || trimmed.starts_with("https://")
         || trimmed.starts_with("s3://")
         || trimmed.starts_with("gs://")
         || trimmed.starts_with("az://")
     {
         let lower = trimmed.to_lowercase();
-        if lower.contains("icechunk") {
+        if lower.starts_with("icechunk+")
+            || lower.starts_with("vcc://")
+            || lower.contains("icechunk")
+        {
             return Ok(StoreKind::RemoteIcechunk);
         }
         return Ok(StoreKind::RemoteZarr);
@@ -193,6 +198,18 @@ mod tests {
         );
         assert_eq!(
             infer_store_kind_from_target("s3://bucket/icechunk_store"),
+            Ok(StoreKind::RemoteIcechunk)
+        );
+        assert_eq!(
+            infer_store_kind_from_target("icechunk+s3://my-bucket/dataset"),
+            Ok(StoreKind::RemoteIcechunk)
+        );
+        assert_eq!(
+            infer_store_kind_from_target("icechunk+https://example.com/repo"),
+            Ok(StoreKind::RemoteIcechunk)
+        );
+        assert_eq!(
+            infer_store_kind_from_target("vcc://container-bucket/key"),
             Ok(StoreKind::RemoteIcechunk)
         );
     }

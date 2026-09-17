@@ -68,6 +68,62 @@ pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
     Ok(uint8_array.to_vec())
 }
 
+/// Fetches a specific byte range from a remote URL using HTTP Range headers.
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_url_byte_range(url: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_sys::window().ok_or_else(|| "No global window object found".to_string())?;
+
+    let headers =
+        web_sys::Headers::new().map_err(|e| format!("Failed to create headers: {e:?}"))?;
+    let end = offset.saturating_add(length).saturating_sub(1);
+    let range_val = format!("bytes={offset}-{end}");
+    headers
+        .set("Range", &range_val)
+        .map_err(|e| format!("Failed to set Range header: {e:?}"))?;
+
+    let init = web_sys::RequestInit::new();
+    init.set_method("GET");
+    init.set_headers(&headers);
+
+    let request = web_sys::Request::new_with_str_and_init(url, &init)
+        .map_err(|e| format!("Failed to build request: {e:?}"))?;
+
+    let resp_val = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("Network range fetch failed for '{url}': {e:?}"))?;
+
+    let resp: web_sys::Response = resp_val
+        .dyn_into()
+        .map_err(|_| "Failed to cast fetch response".to_string())?;
+
+    let status = resp.status();
+    if status != 200 && status != 206 {
+        return Err(format!("HTTP {status} fetching byte range from '{url}'"));
+    }
+
+    let array_buffer_prom = resp
+        .array_buffer()
+        .map_err(|e| format!("Failed to read array buffer: {e:?}"))?;
+
+    let array_buffer_val = JsFuture::from(array_buffer_prom)
+        .await
+        .map_err(|e| format!("Failed to resolve array buffer: {e:?}"))?;
+
+    let uint8_array = js_sys::Uint8Array::new(&array_buffer_val);
+    let bytes = uint8_array.to_vec();
+    if status == 200 && (bytes.len() as u64) > length {
+        let start = offset as usize;
+        let slice_end = (offset + length) as usize;
+        if start < bytes.len() {
+            return Ok(bytes[start..slice_end.min(bytes.len())].to_vec());
+        }
+    }
+    Ok(bytes)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
     reqwest::get(url)
@@ -77,6 +133,33 @@ pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
         .await
         .map(|b| b.to_vec())
         .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn fetch_url_byte_range(url: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::new();
+    let end = offset.saturating_add(length).saturating_sub(1);
+    let resp = client
+        .get(url)
+        .header("Range", format!("bytes={offset}-{end}"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = resp.status().as_u16();
+    if status != 200 && status != 206 {
+        return Err(format!("HTTP {status} fetching byte range from '{url}'"));
+    }
+
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    if status == 200 && (bytes.len() as u64) > length {
+        let start = offset as usize;
+        let slice_end = (offset + length) as usize;
+        if start < bytes.len() {
+            return Ok(bytes[start..slice_end.min(bytes.len())].to_vec());
+        }
+    }
+    Ok(bytes)
 }
 
 /// WASM-compatible Zarr BlockStore backed by in-memory metadata and on-demand chunk fetching.
@@ -170,16 +253,7 @@ impl WasmZarrBlockStore {
         let var_path = format!("/{clean_var}");
 
         let array = open_or_instantiate_array_normalized(self.memory_store.clone(), &var_path)
-            .map_err(|e| {
-                let err_str = e.to_string();
-                if err_str.contains("blosc") {
-                    "Compressed with Blosc (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-                } else if err_str.contains("zstd") {
-                    "Compressed with Zstd (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-                } else {
-                    format!("Failed to open array '{clean_var}': {err_str}")
-                }
-            })?;
+            .map_err(|e| format!("Failed to open array '{clean_var}': {e}"))?;
 
         let rank = array.shape().len();
         let zero_idx = vec![0u64; rank];
@@ -205,19 +279,19 @@ impl WasmZarrBlockStore {
         let mut current = chunk_ranges.iter().map(|r| r.start).collect::<Vec<u64>>();
         loop {
             let chunk_rel_key = array.chunk_key(&current);
-            let store_key_str = if clean_var.is_empty() {
-                chunk_rel_key.as_str().to_string()
-            } else {
-                format!("{clean_var}/{}", chunk_rel_key.as_str())
-            };
+            let store_key_str = chunk_rel_key.as_str().to_string();
 
             if !self.has_key(&store_key_str) {
                 let chunk_url = format!("{}/{}", self.base_url, store_key_str);
-                log::debug!("[WASM Zarr] Fetching chunk: {chunk_url}");
+                log::info!("[WASM Zarr] Fetching chunk: {chunk_url}");
 
                 match fetch_url_bytes(&chunk_url).await {
                     Ok(chunk_bytes) => {
                         let bytes_len = chunk_bytes.len() as u64;
+                        log::info!(
+                            "[WASM Zarr] Fetched chunk {store_key_str} ({} bytes)",
+                            bytes_len
+                        );
                         self.insert_key_bytes(&store_key_str, &chunk_bytes)?;
 
                         if let Some(ref mut cb) = on_progress {
@@ -225,12 +299,13 @@ impl WasmZarrBlockStore {
                         }
                     }
                     Err(err) if err.contains("HTTP 404") => {
-                        log::debug!(
-                            "[WASM Zarr] Chunk not found (404 / sparse chunk): {chunk_url}"
+                        log::warn!(
+                            "[WASM Zarr] Chunk not found (HTTP 404 / sparse chunk): {chunk_url}"
                         );
                         // In Zarr specification, missing chunks are treated as fill value.
                     }
                     Err(err) => {
+                        log::error!("[WASM Zarr] Failed to fetch chunk '{chunk_url}': {err}");
                         return Err(format!("Failed to fetch chunk '{chunk_url}': {err}").into());
                     }
                 }
@@ -251,7 +326,50 @@ impl WasmZarrBlockStore {
             }
         }
 
+        // Preload associated 1D coordinate arrays (e.g. lat, lon, time) for spatial bounds & axes
+        let dim_names = crate::utils::resolve_array_dimension_names(&array);
+        self.preload_coordinate_chunks(&dim_names).await;
+
         Ok(())
+    }
+
+    /// Preloads chunks for 1D coordinate arrays (e.g. lat, lon, time) associated with this dataset.
+    pub async fn preload_coordinate_chunks(&self, dim_names: &[String]) {
+        let mut coord_candidates = Vec::new();
+        for dim in dim_names {
+            let clean = dim.trim().trim_start_matches('/').to_string();
+            if !coord_candidates.contains(&clean) {
+                coord_candidates.push(clean);
+            }
+        }
+        for fallback in &["lat", "latitude", "y", "lon", "longitude", "x", "time"] {
+            let s = fallback.to_string();
+            if !coord_candidates.contains(&s) {
+                coord_candidates.push(s);
+            }
+        }
+
+        for coord_name in coord_candidates {
+            let coord_path = format!("/{coord_name}");
+            if let Ok(coord_array) =
+                open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
+                && coord_array.shape().len() == 1
+            {
+                let zero = vec![0u64];
+                let chunk_key = coord_array.chunk_key(&zero);
+                let store_key = chunk_key.as_str().to_string();
+                if !self.has_key(&store_key) {
+                    let chunk_url = format!("{}/{}", self.base_url, store_key);
+                    if let Ok(bytes) = fetch_url_bytes(&chunk_url).await {
+                        let _ = self.insert_key_bytes(&store_key, &bytes);
+                        log::info!(
+                            "[WASM Zarr] Preloaded coordinate chunk '{store_key}' ({} bytes)",
+                            bytes.len()
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -491,6 +609,15 @@ pub async fn load_one_wasm_with_progress(
 ) -> Result<OctantBlock, BlockStoreError> {
     let source_uri = &request.store.source().uri;
 
+    // Route Icechunk data sources to Icechunk WASM loader
+    if request.store.source().kind == crate::data::DataSourceKind::RemoteIcechunk
+        || request.store.source().kind == crate::data::DataSourceKind::LocalIcechunk
+        || source_uri.starts_with("icechunk+")
+    {
+        return super::wasm_icechunk::load_one_icechunk_wasm_with_progress(request, on_progress)
+            .await;
+    }
+
     // If it's a procedural dataset or non-HTTP store, fetch directly
     if source_uri.starts_with("procedural://") || source_uri.starts_with("test://") {
         return request
@@ -513,23 +640,7 @@ pub async fn load_one_wasm_with_progress(
         })
         .unwrap_or_default();
 
-    let rank = request.slice.selections.len();
-    let mut ranges = Vec::with_capacity(rank);
-
-    for (i, sel) in request.slice.selections.iter().enumerate() {
-        let dim_len = shape.get(i).copied().unwrap_or(1000) as usize;
-        let (start, end) = match *sel {
-            crate::data::slice_request::DimensionSelection::Index(idx) => {
-                (idx, idx.saturating_add(1))
-            }
-            crate::data::slice_request::DimensionSelection::Range { start, end } => (start, end),
-        };
-        let start = start.min(dim_len.saturating_sub(1));
-        let end = end.max(start + 1).min(dim_len);
-        ranges.push(start as u64..end as u64);
-    }
-
-    let subset = ArraySubset::new_with_ranges(&ranges);
+    let subset = request.slice.to_array_subset(&shape);
     log::info!(
         "[WASM Zarr] Preloading chunks for '{}', subset: {:?}",
         request.slice.variable,
@@ -541,19 +652,11 @@ pub async fn load_one_wasm_with_progress(
         .preload_chunks_for_subset(&request.slice.variable, &subset, on_progress)
         .await
     {
-        let err_str = e.to_string();
-        let user_msg = if err_str.contains("blosc") {
-            "Compressed with Blosc (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-        } else if err_str.contains("zstd") {
-            "Compressed with Zstd (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-        } else {
-            err_str
-        };
         log::error!(
-            "[WASM Zarr] Failed downloading chunks for '{}': {user_msg}",
+            "[WASM Zarr] Failed downloading chunks for '{}': {e}",
             request.slice.variable
         );
-        return Err(user_msg.into());
+        return Err(e);
     }
 
     // Now decode the slice synchronously from in-memory chunks
@@ -568,19 +671,11 @@ pub async fn load_one_wasm_with_progress(
             Ok(block)
         }
         Err(e) => {
-            let err_str = e.to_string();
-            let user_msg = if err_str.contains("blosc") {
-                "Compressed with Blosc (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-            } else if err_str.contains("zstd") {
-                "Compressed with Zstd (supported in desktop build). For browser streaming, export with uncompressed chunks.".to_string()
-            } else {
-                err_str
-            };
             log::error!(
-                "[WASM Zarr] Failed decoding block for '{}': {user_msg}",
+                "[WASM Zarr] Failed decoding block for '{}': {e}",
                 request.slice.variable
             );
-            Err(user_msg.into())
+            Err(e)
         }
     }
 }

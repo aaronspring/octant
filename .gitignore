@@ -1,15 +1,11 @@
 /target
-zarrs
-egui
 data_new
-wgpu
 .agents/skills/rust-skills/
-netcdf
-gribberish
 dist
 .vscode
 tests/data/
 *.nc
 .DS_Store
+dev
 # Generated coastline vertex buffers — run `cargo run --bin fetch_coastlines` to rebuild
 # assets/coastlines/
