@@ -360,47 +360,8 @@ impl WasmZarrBlockStore {
     /// Preloads boundary chunks for 1D coordinate arrays (e.g. lat, lon, time, depth) associated with the dataset variables.
     #[allow(clippy::single_range_in_vec_init)]
     pub async fn preload_coordinate_variables(&self, variables: &[VariableInfo]) {
-        let mut coord_candidates = Vec::new();
-
-        // 1. All 1D variables in the store
-        for var in variables {
-            if var.shape.len() == 1 && var.shape.first().copied().unwrap_or(0) > 0 {
-                let clean = var.name.trim().trim_start_matches('/').to_string();
-                if !coord_candidates.contains(&clean) {
-                    coord_candidates.push(clean);
-                }
-            }
-        }
-
-        // 2. All dimension names declared in multidimensional variables
-        for var in variables {
-            for dim in &var.dimension_names {
-                let clean = dim.trim().trim_start_matches('/').to_string();
-                if !clean.is_empty() && !coord_candidates.contains(&clean) {
-                    coord_candidates.push(clean);
-                }
-            }
-        }
-
-        // 3. Standard fallback spatial & temporal coordinate aliases
-        for fallback in &[
-            "lat",
-            "latitude",
-            "y",
-            "lon",
-            "longitude",
-            "x",
-            "time",
-            "depth",
-            "lev",
-            "level",
-            "height",
-        ] {
-            let s = fallback.to_string();
-            if !coord_candidates.contains(&s) {
-                coord_candidates.push(s);
-            }
-        }
+        let coord_candidates =
+            crate::data::backends::coord_bounds::collect_coordinate_candidates(variables);
 
         for coord_name in coord_candidates {
             let coord_path = format!("/{coord_name}");
@@ -426,6 +387,38 @@ impl WasmZarrBlockStore {
                 }
             }
         }
+    }
+
+    /// Finalizes metadata by preloading coordinates, resolving dimension coordinates, and caching dataset metadata.
+    pub async fn finalize_metadata(
+        &self,
+        variables: Vec<VariableInfo>,
+        clean_url: &str,
+    ) -> DatasetMetadata {
+        self.preload_coordinate_variables(&variables).await;
+        let dimension_coordinates =
+            crate::data::backends::coord_bounds::fetch_all_dimension_coordinates_for_variables(
+                self.memory_store.clone(),
+                &variables,
+                Some(clean_url),
+            );
+
+        let dataset_name = clean_url
+            .split('/')
+            .next_back()
+            .unwrap_or(clean_url)
+            .to_string();
+
+        let dataset_metadata = DatasetMetadata {
+            name: dataset_name,
+            store_type: "zarr".to_string(),
+            variables,
+            dimension_coordinates,
+        };
+
+        let mut guard = self.metadata.write().unwrap_or_else(|p| p.into_inner());
+        *guard = Some(dataset_metadata.clone());
+        dataset_metadata
     }
 }
 
@@ -580,30 +573,7 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
         }
 
         if !variables.is_empty() {
-            store.preload_coordinate_variables(&variables).await;
-            let dimension_coordinates =
-                crate::data::backends::coord_bounds::fetch_all_dimension_coordinates_for_variables(
-                    store.memory_store.clone(),
-                    &variables,
-                    Some(clean_url),
-                );
-
-            let dataset_name = clean_url
-                .split('/')
-                .next_back()
-                .unwrap_or(clean_url)
-                .to_string();
-
-            let dataset_metadata = DatasetMetadata {
-                name: dataset_name,
-                store_type: "zarr".to_string(),
-                variables,
-                dimension_coordinates,
-            };
-
-            let mut guard = store.metadata.write().unwrap_or_else(|p| p.into_inner());
-            *guard = Some(dataset_metadata.clone());
-            return Ok(dataset_metadata);
+            return Ok(store.finalize_metadata(variables, clean_url).await);
         }
     }
 
@@ -623,28 +593,7 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
             }
 
             if !variables.is_empty() {
-                store.preload_coordinate_variables(&variables).await;
-                let dimension_coordinates =
-                    crate::data::backends::coord_bounds::fetch_all_dimension_coordinates_for_variables(
-                        store.memory_store.clone(),
-                        &variables,
-                        Some(clean_url),
-                    );
-
-                let dataset_name = clean_url
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(clean_url)
-                    .to_string();
-                let dataset_metadata = DatasetMetadata {
-                    name: dataset_name,
-                    store_type: "zarr".to_string(),
-                    variables,
-                    dimension_coordinates,
-                };
-                let mut guard = store.metadata.write().unwrap_or_else(|p| p.into_inner());
-                *guard = Some(dataset_metadata.clone());
-                return Ok(dataset_metadata);
+                return Ok(store.finalize_metadata(variables, clean_url).await);
             }
         }
 
@@ -652,29 +601,7 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
         if let Ok(arr) = open_or_instantiate_array_normalized(store.memory_store.clone(), "/")
             && let Some(var_info) = variable_info_from_array(&arr, "data")
         {
-            let variables = vec![var_info];
-            store.preload_coordinate_variables(&variables).await;
-            let dimension_coordinates =
-                crate::data::backends::coord_bounds::fetch_all_dimension_coordinates_for_variables(
-                    store.memory_store.clone(),
-                    &variables,
-                    Some(clean_url),
-                );
-
-            let dataset_name = clean_url
-                .split('/')
-                .next_back()
-                .unwrap_or(clean_url)
-                .to_string();
-            let dataset_metadata = DatasetMetadata {
-                name: dataset_name,
-                store_type: "zarr".to_string(),
-                variables,
-                dimension_coordinates,
-            };
-            let mut guard = store.metadata.write().unwrap_or_else(|p| p.into_inner());
-            *guard = Some(dataset_metadata.clone());
-            return Ok(dataset_metadata);
+            return Ok(store.finalize_metadata(vec![var_info], clean_url).await);
         }
     }
 

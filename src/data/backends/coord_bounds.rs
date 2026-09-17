@@ -8,6 +8,53 @@ use zarrs::storage::ReadableWritableListableStorage;
 #[allow(clippy::type_complexity)]
 static COORD_VALUES_CACHE: OnceLock<RwLock<HashMap<String, Option<Vec<String>>>>> = OnceLock::new();
 
+/// Collects candidate 1D coordinate array names from dataset variables, dimension names, and standard aliases.
+pub fn collect_coordinate_candidates(variables: &[crate::data::VariableInfo]) -> Vec<String> {
+    let mut coord_candidates = Vec::new();
+
+    // 1. All 1D variables in the store
+    for var in variables {
+        if var.shape.len() == 1 && var.shape.first().copied().unwrap_or(0) > 0 {
+            let clean = var.name.trim().trim_start_matches('/').to_string();
+            if !coord_candidates.contains(&clean) {
+                coord_candidates.push(clean);
+            }
+        }
+    }
+
+    // 2. All dimension names declared in multidimensional variables
+    for var in variables {
+        for dim in &var.dimension_names {
+            let clean = dim.trim().trim_start_matches('/').to_string();
+            if !clean.is_empty() && !coord_candidates.contains(&clean) {
+                coord_candidates.push(clean);
+            }
+        }
+    }
+
+    // 3. Standard fallback spatial & temporal coordinate aliases
+    for fallback in &[
+        "lat",
+        "latitude",
+        "y",
+        "lon",
+        "longitude",
+        "x",
+        "time",
+        "depth",
+        "lev",
+        "level",
+        "height",
+    ] {
+        let s = fallback.to_string();
+        if !coord_candidates.contains(&s) {
+            coord_candidates.push(s);
+        }
+    }
+
+    coord_candidates
+}
+
 /// Fetches all dimension coordinate values for the specified dimension names across the store.
 pub fn fetch_all_dimension_coordinates(
     store: ReadableWritableListableStorage,

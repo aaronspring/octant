@@ -155,39 +155,8 @@ pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, 
         .unwrap_or_else(|p| p.into_inner()) = manifest_map;
 
     // Preload 1D coordinate arrays to populate dimension_coordinates
-    let mut coord_candidates: Vec<String> = Vec::new();
-    for var in &variables {
-        if var.shape.len() == 1 && var.shape.first().copied().unwrap_or(0) > 0 {
-            let clean = var.name.trim().trim_start_matches('/').to_string();
-            if !coord_candidates.contains(&clean) {
-                coord_candidates.push(clean);
-            }
-        }
-        for dim in &var.dimension_names {
-            let clean = dim.trim().trim_start_matches('/').to_string();
-            if !clean.is_empty() && !coord_candidates.contains(&clean) {
-                coord_candidates.push(clean);
-            }
-        }
-    }
-    for fallback in &[
-        "lat",
-        "latitude",
-        "y",
-        "lon",
-        "longitude",
-        "x",
-        "time",
-        "depth",
-        "lev",
-        "level",
-        "height",
-    ] {
-        let s = fallback.to_string();
-        if !coord_candidates.contains(&s) {
-            coord_candidates.push(s);
-        }
-    }
+    let coord_candidates =
+        crate::data::backends::coord_bounds::collect_coordinate_candidates(&variables);
 
     for coord_name in &coord_candidates {
         if let Some(var_info) = variables.iter().find(|v| &v.name == coord_name) {
