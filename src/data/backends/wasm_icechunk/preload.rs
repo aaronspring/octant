@@ -20,6 +20,7 @@ use crate::utils::remote::s3_to_https;
 impl WasmIcechunkBlockStore {
     /// Preloads chunks required for a slice request by querying Icechunk manifests.
     #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::single_range_in_vec_init)]
     pub async fn preload_chunks_for_subset(
         &self,
         var_name: &str,
@@ -210,8 +211,32 @@ impl WasmIcechunkBlockStore {
         }
 
         // Preload coordinate chunks
-        let dim_names = crate::utils::resolve_array_dimension_names(&array);
-        self.inner.preload_coordinate_chunks(&dim_names).await;
+        if rank > 1 {
+            let dim_names = crate::utils::resolve_array_dimension_names(&array);
+            for dim in dim_names {
+                let clean = dim.trim().trim_start_matches('/').to_string();
+                let coord_path = format!("/{clean}");
+                if let Ok(coord_array) = open_or_instantiate_array_normalized(
+                    self.inner.memory_store.clone(),
+                    &coord_path,
+                ) && coord_array.shape().len() == 1
+                {
+                    let count = coord_array.shape().first().copied().unwrap_or(0);
+                    if count > 0 {
+                        let subset_start = ArraySubset::new_with_ranges(&[0..1]);
+                        let _ =
+                            Box::pin(self.preload_chunks_for_subset(&clean, &subset_start, None))
+                                .await;
+                        if count > 1 {
+                            let subset_end = ArraySubset::new_with_ranges(&[(count - 1)..count]);
+                            let _ =
+                                Box::pin(self.preload_chunks_for_subset(&clean, &subset_end, None))
+                                    .await;
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
