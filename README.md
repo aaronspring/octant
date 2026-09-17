@@ -1,17 +1,27 @@
 # octant
 
 [<img alt="github" src="https://img.shields.io/badge/github-lazarusA/octant-8da0cb?logo=github" height="20">](https://github.com/lazarusA/octant)
+[![Live Demo](https://img.shields.io/badge/demo-online%20(wasm)-blue?logo=webassembly&logoColor=white)](https://lazarusa.github.io/octant/)
 [![Latest version](https://img.shields.io/crates/v/octant.svg)](https://crates.io/crates/octant)
-[![Build Status](https://github.com/lazarusA/octant/workflows/Rust/badge.svg)](https://github.com/lazarusA/octant/actions/workflows/rust.yml)
+[![Build Status](https://github.com/lazarusA/octant/actions/workflows/rust.yml/badge.svg)](https://github.com/lazarusA/octant/actions/workflows/rust.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/lazarusA/octant/blob/main/LICENSE-MIT)
 [![Apache](https://img.shields.io/badge/license-Apache-blue.svg)](https://github.com/lazarusA/octant/blob/main/LICENSE-APACHE)
 
-An interactive viewer for n-dimensional datasets with native support for local and cloud object storage, Zarr, and Icechunk. Built in Rust with GPU-accelerated rendering.
+An interactive viewer for n-dimensional datasets with native support for local and cloud object storage, Zarr, Icechunk, NetCDF, and HDF5. Built in Rust with GPU-accelerated rendering.
 
 ![Octant Screenshot](https://raw.githubusercontent.com/lazarusA/octant/1f9797486adcc7d2ea43409d2d248771d90a4d33/assets/octant_tas.png)
 
+## Live Demo
+
+Try Octant directly in your browser without installing anything:
+
+👉 **[Launch Octant Live Demo](https://lazarusa.github.io/octant/)**
+
+Powered by WebAssembly with hardware-accelerated rendering via WebGPU (with WebGL2 fallback).
+
 ## Install
-In order to use `octant` you need to [install rust first](https://rust-lang.org/tools/install/). Then do, 
+
+In order to use `octant` as a native desktop application, you need to [install rust first](https://rust-lang.org/tools/install/). Then run:
 
 ```bash
 cargo install octant
@@ -19,7 +29,7 @@ cargo install octant
 
 Running the above command will globally install the **octant** binary.
 
-## run
+## Run
 
 ```bash
 octant
@@ -27,10 +37,10 @@ octant
 
 ## Features
 
-- **Flexible Data Storage**: Seamless access to local filesystems and remote cloud object stores (S3, HTTP, Azure, GCP) via `object_store`, [Zarr](https://zarr.dev/), and [Icechunk](https://icechunk.io/).
+- **Flexible Data Storage**: Seamless access to local filesystems and remote cloud object stores (S3, HTTP, Azure, GCP) via `object_store`, [Zarr](https://zarr.dev/), and [Icechunk](https://icechunk.io/), plus native desktop support for [NetCDF](https://www.unidata.ucar.edu/software/netcdf/) (`.nc`, `.nc4`, `.cdf`) and [HDF5](https://www.hdfgroup.org/solutions/hdf5/) (`.h5`, `.hdf5`).
 - **Interactive Plotting**: Explore n-dimensional data with diverse plot types, 1D/2D slice renderers, and 3D spatial visualizers.
-- **Hardware-Accelerated Rendering**: Fast rendering powered by `wgpu` and `octant` / `eframe`.
-- **Cross-Platform**: Native desktop application with full WebAssembly (WASM) browser support [WIP].
+- **Hardware-Accelerated Rendering**: High-performance rendering pipeline powered by [`wgpu`](https://wgpu.rs/) and [`egui`](https://github.com/emilk/egui), featuring custom WGSL shaders, GPU instancing, and colormapping across Vulkan, Metal, DirectX, and WebGPU / WebGL2.
+- **Cross-Platform**: Available as both a high-performance native desktop application and in modern web browsers via WebAssembly (WASM with WebGPU / WebGL2).
 
 ## License
 
