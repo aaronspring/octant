@@ -7,8 +7,6 @@ use std::collections::HashMap;
 use icechunk_format::format_constants::SpecVersionBin;
 #[cfg(target_arch = "wasm32")]
 use icechunk_format::snapshot::{NodeData, Snapshot};
-#[cfg(target_arch = "wasm32")]
-use zarrs::array::ArraySubset;
 
 #[cfg(target_arch = "wasm32")]
 use super::discovery::resolve_snapshot_id;
@@ -29,6 +27,7 @@ use crate::utils::units::calculate_variable_size_bytes;
 
 /// Asynchronously inspects a remote Icechunk repository in the browser and returns `DatasetMetadata`.
 #[cfg(target_arch = "wasm32")]
+#[allow(clippy::single_range_in_vec_init)]
 pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, String> {
     let clean_url = url.trim_start_matches("icechunk+").trim_end_matches('/');
     if clean_url.is_empty() {
@@ -154,21 +153,13 @@ pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, 
         .unwrap_or_else(|p| p.into_inner()) = manifest_map;
 
     // Preload 1D coordinate arrays to populate dimension_coordinates
-    let coord_candidates: Vec<String> = variables
-        .iter()
-        .filter(|v| v.shape.len() == 1 && v.shape.first().copied().unwrap_or(0) <= 10000)
-        .map(|v| v.name.clone())
-        .collect();
+    let coord_candidates =
+        crate::data::backends::coord_bounds::collect_coordinate_candidates(&variables);
 
     for coord_name in &coord_candidates {
         if let Some(var_info) = variables.iter().find(|v| &v.name == coord_name) {
             let count = var_info.shape.first().copied().unwrap_or(0);
-            if count > 0 {
-                let subset = ArraySubset::new_with_shape(vec![count]);
-                let _ = store
-                    .preload_chunks_for_subset(coord_name, &subset, None)
-                    .await;
-            }
+            store.preload_boundary_chunks_1d(coord_name, count).await;
         }
     }
 

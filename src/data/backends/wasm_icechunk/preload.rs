@@ -20,6 +20,7 @@ use crate::utils::remote::s3_to_https;
 impl WasmIcechunkBlockStore {
     /// Preloads chunks required for a slice request by querying Icechunk manifests.
     #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::single_range_in_vec_init)]
     pub async fn preload_chunks_for_subset(
         &self,
         var_name: &str,
@@ -116,7 +117,9 @@ impl WasmIcechunkBlockStore {
                         }
                     };
 
-                    match manifest_arc.get_chunk_payload(&node_id, &chunk_indices) {
+                    let chunk_bytes_opt = match manifest_arc
+                        .get_chunk_payload(&node_id, &chunk_indices)
+                    {
                         Ok(ChunkPayload::Virtual(vchunk)) => {
                             let location_url = vchunk.location.url();
                             let target_url = s3_to_https(location_url);
@@ -125,8 +128,7 @@ impl WasmIcechunkBlockStore {
                                 vchunk.offset,
                                 vchunk.length
                             );
-
-                            let chunk_bytes =
+                            let bytes =
                                 fetch_url_byte_range(&target_url, vchunk.offset, vchunk.length)
                                     .await
                                     .map_err(|e| {
@@ -134,16 +136,7 @@ impl WasmIcechunkBlockStore {
                                             "Failed fetching virtual chunk from '{target_url}': {e}"
                                         )
                                     })?;
-
-                            let bytes_len = chunk_bytes.len() as u64;
-                            self.inner.insert_key_bytes(store_key_str, &chunk_bytes)?;
-
-                            if let Some(ref mut cb) = on_progress {
-                                cb(bytes_len);
-                            }
-
-                            chunk_resolved = true;
-                            break;
+                            Some(bytes)
                         }
                         Ok(ChunkPayload::Ref(rchunk)) => {
                             let target_url = format!("{}/chunks/{}", self.base_url, rchunk.id);
@@ -152,8 +145,7 @@ impl WasmIcechunkBlockStore {
                                 rchunk.offset,
                                 rchunk.length
                             );
-
-                            let chunk_bytes =
+                            let bytes =
                                 fetch_url_byte_range(&target_url, rchunk.offset, rchunk.length)
                                     .await
                                     .map_err(|e| {
@@ -161,29 +153,20 @@ impl WasmIcechunkBlockStore {
                                             "Failed fetching chunk ref from '{target_url}': {e}"
                                         )
                                     })?;
-
-                            let bytes_len = chunk_bytes.len() as u64;
-                            self.inner.insert_key_bytes(store_key_str, &chunk_bytes)?;
-
-                            if let Some(ref mut cb) = on_progress {
-                                cb(bytes_len);
-                            }
-
-                            chunk_resolved = true;
-                            break;
+                            Some(bytes)
                         }
-                        Ok(ChunkPayload::Inline(bytes)) => {
-                            let bytes_len = bytes.len() as u64;
-                            self.inner.insert_key_bytes(store_key_str, &bytes)?;
+                        Ok(ChunkPayload::Inline(bytes)) => Some(bytes.to_vec()),
+                        _ => None,
+                    };
 
-                            if let Some(ref mut cb) = on_progress {
-                                cb(bytes_len);
-                            }
-
-                            chunk_resolved = true;
-                            break;
+                    if let Some(chunk_bytes) = chunk_bytes_opt {
+                        let bytes_len = chunk_bytes.len() as u64;
+                        self.inner.insert_key_bytes(store_key_str, &chunk_bytes)?;
+                        if let Some(ref mut cb) = on_progress {
+                            cb(bytes_len);
                         }
-                        _ => {}
+                        chunk_resolved = true;
+                        break;
                     }
                 }
 
@@ -210,10 +193,38 @@ impl WasmIcechunkBlockStore {
         }
 
         // Preload coordinate chunks
-        let dim_names = crate::utils::resolve_array_dimension_names(&array);
-        self.inner.preload_coordinate_chunks(&dim_names).await;
+        if rank > 1 {
+            let dim_names = crate::utils::resolve_array_dimension_names(&array);
+            for dim in dim_names {
+                let clean = dim.trim().trim_start_matches('/').to_string();
+                let coord_path = format!("/{clean}");
+                if let Ok(coord_array) = open_or_instantiate_array_normalized(
+                    self.inner.memory_store.clone(),
+                    &coord_path,
+                ) && coord_array.shape().len() == 1
+                {
+                    let count = coord_array.shape().first().copied().unwrap_or(0);
+                    self.preload_boundary_chunks_1d(&clean, count).await;
+                }
+            }
+        }
 
         Ok(())
+    }
+
+    /// Preloads boundary chunks (start and end) for a 1D coordinate array.
+    #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::single_range_in_vec_init)]
+    pub async fn preload_boundary_chunks_1d(&self, coord_name: &str, count: u64) {
+        if count == 0 {
+            return;
+        }
+        let subset_start = ArraySubset::new_with_ranges(&[0..1]);
+        let _ = Box::pin(self.preload_chunks_for_subset(coord_name, &subset_start, None)).await;
+        if count > 1 {
+            let subset_end = ArraySubset::new_with_ranges(&[(count - 1)..count]);
+            let _ = Box::pin(self.preload_chunks_for_subset(coord_name, &subset_end, None)).await;
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -225,4 +236,7 @@ impl WasmIcechunkBlockStore {
     ) -> Result<(), BlockStoreError> {
         Ok(())
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn preload_boundary_chunks_1d(&self, _coord_name: &str, _count: u64) {}
 }
