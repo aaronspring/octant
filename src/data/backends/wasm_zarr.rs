@@ -338,18 +338,7 @@ impl WasmZarrBlockStore {
                     && coord_array.shape().len() == 1
                 {
                     let count = coord_array.shape().first().copied().unwrap_or(0);
-                    if count > 0 {
-                        let subset_start = ArraySubset::new_with_ranges(&[0..1]);
-                        let _ =
-                            Box::pin(self.preload_chunks_for_subset(&clean, &subset_start, None))
-                                .await;
-                        if count > 1 {
-                            let subset_end = ArraySubset::new_with_ranges(&[(count - 1)..count]);
-                            let _ =
-                                Box::pin(self.preload_chunks_for_subset(&clean, &subset_end, None))
-                                    .await;
-                        }
-                    }
+                    self.preload_boundary_chunks_1d(&clean, count).await;
                 }
             }
         }
@@ -357,8 +346,21 @@ impl WasmZarrBlockStore {
         Ok(())
     }
 
-    /// Preloads boundary chunks for 1D coordinate arrays (e.g. lat, lon, time, depth) associated with the dataset variables.
+    /// Preloads boundary chunks (start and end) for a 1D coordinate array.
     #[allow(clippy::single_range_in_vec_init)]
+    pub async fn preload_boundary_chunks_1d(&self, coord_name: &str, count: u64) {
+        if count == 0 {
+            return;
+        }
+        let subset_start = ArraySubset::new_with_ranges(&[0..1]);
+        let _ = Box::pin(self.preload_chunks_for_subset(coord_name, &subset_start, None)).await;
+        if count > 1 {
+            let subset_end = ArraySubset::new_with_ranges(&[(count - 1)..count]);
+            let _ = Box::pin(self.preload_chunks_for_subset(coord_name, &subset_end, None)).await;
+        }
+    }
+
+    /// Preloads boundary chunks for 1D coordinate arrays (e.g. lat, lon, time, depth) associated with the dataset variables.
     pub async fn preload_coordinate_variables(&self, variables: &[VariableInfo]) {
         let coord_candidates =
             crate::data::backends::coord_bounds::collect_coordinate_candidates(variables);
@@ -370,21 +372,7 @@ impl WasmZarrBlockStore {
                 && coord_array.shape().len() == 1
             {
                 let count = coord_array.shape().first().copied().unwrap_or(0);
-                if count > 0 {
-                    let subset_start = ArraySubset::new_with_ranges(&[0..1]);
-                    let _ =
-                        Box::pin(self.preload_chunks_for_subset(&coord_name, &subset_start, None))
-                            .await;
-                    if count > 1 {
-                        let subset_end = ArraySubset::new_with_ranges(&[(count - 1)..count]);
-                        let _ = Box::pin(self.preload_chunks_for_subset(
-                            &coord_name,
-                            &subset_end,
-                            None,
-                        ))
-                        .await;
-                    }
-                }
+                self.preload_boundary_chunks_1d(&coord_name, count).await;
             }
         }
     }

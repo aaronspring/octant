@@ -186,6 +186,14 @@ pub fn get_cached_coord_bounds_with_rank(
     get_cached_coord_bounds_scoped(store, store_url, dim_name, None, &[], dim_idx, total_dims)
 }
 
+/// Parses numerical (f64, f64) coordinate boundaries from a boundary slice pair.
+#[inline]
+fn parse_bounds_from_values(values: &[String]) -> Option<(f64, f64)> {
+    let first: f64 = values.first()?.parse().ok()?;
+    let last: f64 = values.last()?.parse().ok()?;
+    Some((first, last))
+}
+
 #[allow(clippy::single_range_in_vec_init)]
 pub fn get_cached_coord_bounds_scoped(
     store: ReadableWritableListableStorage,
@@ -205,9 +213,7 @@ pub fn get_cached_coord_bounds_scoped(
         dim_idx,
         total_dims,
     )?;
-    let first: f64 = values.first()?.parse().ok()?;
-    let last: f64 = values.last()?.parse().ok()?;
-    Some((first, last))
+    parse_bounds_from_values(&values)
 }
 
 #[allow(clippy::single_range_in_vec_init)]
@@ -305,9 +311,7 @@ pub fn read_coord_bounds_scoped(
         dim_idx,
         total_dims,
     )?;
-    let first: f64 = values.first()?.parse().ok()?;
-    let last: f64 = values.last()?.parse().ok()?;
-    Some((first, last))
+    parse_bounds_from_values(&values)
 }
 
 #[allow(clippy::single_range_in_vec_init)]

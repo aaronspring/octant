@@ -7,8 +7,6 @@ use std::collections::HashMap;
 use icechunk_format::format_constants::SpecVersionBin;
 #[cfg(target_arch = "wasm32")]
 use icechunk_format::snapshot::{NodeData, Snapshot};
-#[cfg(target_arch = "wasm32")]
-use zarrs::array::ArraySubset;
 
 #[cfg(target_arch = "wasm32")]
 use super::discovery::resolve_snapshot_id;
@@ -161,18 +159,7 @@ pub async fn inspect_wasm_remote_icechunk(url: &str) -> Result<DatasetMetadata, 
     for coord_name in &coord_candidates {
         if let Some(var_info) = variables.iter().find(|v| &v.name == coord_name) {
             let count = var_info.shape.first().copied().unwrap_or(0);
-            if count > 0 {
-                let subset_start = ArraySubset::new_with_ranges(&[0..1]);
-                let _ = store
-                    .preload_chunks_for_subset(coord_name, &subset_start, None)
-                    .await;
-                if count > 1 {
-                    let subset_end = ArraySubset::new_with_ranges(&[(count - 1)..count]);
-                    let _ = store
-                        .preload_chunks_for_subset(coord_name, &subset_end, None)
-                        .await;
-                }
-            }
+            store.preload_boundary_chunks_1d(coord_name, count).await;
         }
     }
 
