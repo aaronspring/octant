@@ -1,5 +1,6 @@
 //! Grid auto-detection and dimension classification heuristics.
 
+use super::ordering::detect_healpix_ordering_with_dggs;
 use super::types::CoordinateGrid;
 use std::sync::Arc;
 
@@ -42,47 +43,6 @@ pub fn is_irregular_series(coords: &[f64]) -> bool {
 
     let delta_variation = (max_delta - min_delta) / mean_delta;
     delta_variation > 0.0005 // > 0.05% variation is considered irregular (e.g. Gaussian grids, Clenshaw-Curtis)
-}
-
-/// Helper to detect HEALPix ordering scheme with zero heap allocations, reusing already-parsed DGGS metadata if present.
-#[inline]
-pub fn detect_healpix_ordering_with_dggs(
-    attributes: &std::collections::HashMap<String, String>,
-    dggs: Option<&super::dggs::DggsMetadata>,
-) -> super::healpix::HealpixOrder {
-    if let Some(dggs) = dggs
-        && dggs.is_healpix()
-    {
-        return dggs.healpix_ordering();
-    }
-
-    let is_nested = attributes
-        .get("healpix_nest")
-        .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        || attributes
-            .get("healpix_order")
-            .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
-        || attributes
-            .get("ordering")
-            .is_some_and(|v| v.eq_ignore_ascii_case("nested"))
-        || attributes
-            .get("grid_type")
-            .is_some_and(|v| super::naming::contains_ascii_case_insensitive(v, "nested"));
-
-    if is_nested {
-        super::healpix::HealpixOrder::Nested
-    } else {
-        super::healpix::HealpixOrder::Ring
-    }
-}
-
-/// Helper to detect HEALPix ordering scheme with zero heap allocations.
-#[inline]
-pub fn detect_healpix_ordering(
-    attributes: &std::collections::HashMap<String, String>,
-) -> super::healpix::HealpixOrder {
-    let dggs = super::dggs::DggsMetadata::from_attributes(attributes);
-    detect_healpix_ordering_with_dggs(attributes, dggs.as_ref())
 }
 
 /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays and OctantBlock metadata.
