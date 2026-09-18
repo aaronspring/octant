@@ -34,23 +34,31 @@ pub struct WasmZarrBlockStore {
     pub memory_store: ReadableWritableListableStorage,
     pub metadata: RwLock<Option<DatasetMetadata>>,
     pub is_local_notice: bool,
+    pub generic_store: crate::data::backends::zarr::GenericZarrBlockStore,
 }
 
 impl WasmZarrBlockStore {
     #[cfg(target_arch = "wasm32")]
     pub fn get_or_create(url: &str) -> Arc<Self> {
-        crate::data::codecs::register_wasm_codecs();
         let clean_url = url.trim_end_matches('/').to_string();
         WASM_STORES.with(|stores| {
             let mut map = stores.borrow_mut();
             if let Some(store) = map.get(&clean_url) {
                 store.clone()
             } else {
+                let memory_store: ReadableWritableListableStorage = Arc::new(MemoryStore::new());
+                let generic_store = crate::data::backends::zarr::GenericZarrBlockStore::new(
+                    memory_store.clone(),
+                    &clean_url,
+                    "zarr",
+                    "Zarr",
+                );
                 let new_store = Arc::new(Self {
                     base_url: clean_url.clone(),
-                    memory_store: Arc::new(MemoryStore::new()),
+                    memory_store,
                     metadata: RwLock::new(None),
                     is_local_notice: false,
+                    generic_store,
                 });
                 map.insert(clean_url, new_store.clone());
                 new_store
@@ -66,11 +74,19 @@ impl WasmZarrBlockStore {
         if let Some(store) = guard.get(&clean_url) {
             store.clone()
         } else {
+            let memory_store: ReadableWritableListableStorage = Arc::new(MemoryStore::new());
+            let generic_store = crate::data::backends::zarr::GenericZarrBlockStore::new(
+                memory_store.clone(),
+                &clean_url,
+                "zarr",
+                "Zarr",
+            );
             let new_store = Arc::new(Self {
                 base_url: clean_url.clone(),
-                memory_store: Arc::new(MemoryStore::new()),
+                memory_store,
                 metadata: RwLock::new(None),
                 is_local_notice: false,
+                generic_store,
             });
             guard.insert(clean_url, new_store.clone());
             new_store
@@ -78,11 +94,19 @@ impl WasmZarrBlockStore {
     }
 
     pub fn open_local_notice(path: &str) -> Arc<Self> {
+        let memory_store: ReadableWritableListableStorage = Arc::new(MemoryStore::new());
+        let generic_store = crate::data::backends::zarr::GenericZarrBlockStore::new(
+            memory_store.clone(),
+            path,
+            "zarr",
+            "Zarr",
+        );
         Arc::new(Self {
             base_url: path.to_string(),
-            memory_store: Arc::new(MemoryStore::new()),
+            memory_store,
             metadata: RwLock::new(None),
             is_local_notice: true,
+            generic_store,
         })
     }
 

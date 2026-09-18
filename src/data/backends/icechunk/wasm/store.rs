@@ -8,7 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use icechunk_format::manifest::{Manifest, ManifestRef};
 
 use crate::data::DatasetMetadata;
-use crate::data::backends::zarr::{WasmZarrBlockStore, fetch_block_with_progress};
+use crate::data::backends::zarr::WasmZarrBlockStore;
 use crate::data::blocks::{BlockStore, BlockStoreError, ProgressCallback};
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::SliceRequest;
@@ -100,12 +100,7 @@ impl BlockStore for WasmIcechunkBlockStore {
     }
 
     fn fetch_block(&self, request: &SliceRequest) -> Result<OctantBlock, BlockStoreError> {
-        fetch_block_with_progress(
-            self.inner.memory_store.clone(),
-            &self.base_url,
-            request,
-            None,
-        )
+        self.inner.fetch_block(request)
     }
 
     fn fetch_block_with_progress(
@@ -113,11 +108,13 @@ impl BlockStore for WasmIcechunkBlockStore {
         request: &SliceRequest,
         on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
-        fetch_block_with_progress(
-            self.inner.memory_store.clone(),
-            &self.base_url,
-            request,
-            on_progress,
-        )
+        self.inner.fetch_block_with_progress(request, on_progress)
+    }
+
+    fn fetch_blocks(
+        &self,
+        requests: &[SliceRequest],
+    ) -> Result<crate::data::blocks::BlockResult, BlockStoreError> {
+        self.inner.fetch_blocks(requests)
     }
 }

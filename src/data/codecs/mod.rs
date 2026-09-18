@@ -9,12 +9,3 @@ pub mod zstd_plugin;
 pub use blusc_plugin::BluscCodec;
 pub use normalize::{is_array_to_bytes_codec, normalize_v3_array_metadata, order_codec_pipeline};
 pub use zstd_plugin::RuzstdCodec;
-
-/// Explicitly references codec plugins to ensure linker retention on WebAssembly.
-pub fn register_wasm_codecs() {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = &BluscCodec;
-        let _ = &RuzstdCodec;
-    }
-}

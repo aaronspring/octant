@@ -88,10 +88,27 @@ pub async fn fetch_url_byte_range(url: &str, offset: u64, length: u64) -> Result
     Ok(bytes)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
 /// Fetches raw bytes from a remote URL on desktop targets via `reqwest`.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
-    reqwest::get(url)
+    let client = get_http_client();
+    client
+        .get(url)
+        .send()
         .await
         .map_err(|e| e.to_string())?
         .bytes()
@@ -103,7 +120,7 @@ pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
 /// Fetches a specific byte range from a remote URL on desktop targets via `reqwest`.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn fetch_url_byte_range(url: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
-    let client = reqwest::Client::new();
+    let client = get_http_client();
     let end = offset.saturating_add(length).saturating_sub(1);
     let resp = client
         .get(url)

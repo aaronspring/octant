@@ -26,11 +26,11 @@ pub fn build_sync_icechunk_store(
     location: &str,
 ) -> Result<ReadableWritableListableStorage, Box<dyn Error + Send + Sync>> {
     let cache_lock = ICECHUNK_STORE_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
-    if let Ok(cache) = cache_lock.read()
-        && let Some(store) = cache.get(location)
-    {
+    let cache = cache_lock.read().unwrap_or_else(|p| p.into_inner());
+    if let Some(store) = cache.get(location) {
         return Ok(store.clone());
     }
+    drop(cache);
 
     let rt = get_shared_tokio_rt();
 
@@ -91,9 +91,9 @@ pub fn build_sync_icechunk_store(
         TokioBlockOn(rt.clone()),
     ));
 
-    if let Ok(mut cache) = cache_lock.write() {
-        cache.insert(location.to_string(), sync_store.clone());
-    }
+    let mut cache = cache_lock.write().unwrap_or_else(|p| p.into_inner());
+    cache.insert(location.to_string(), sync_store.clone());
+    drop(cache);
 
     Ok(sync_store)
 }
