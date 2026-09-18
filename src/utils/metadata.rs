@@ -242,6 +242,36 @@ pub fn variable_info_from_node_metadata(
     variable_info_from_node_metadata_with_parent_attributes(var_name, node_meta, None)
 }
 
+/// Merges parent group attributes into target attributes map without overriding existing keys.
+#[inline]
+pub fn merge_parent_attributes(
+    target: &mut HashMap<String, String>,
+    parent: &HashMap<String, String>,
+) {
+    for (k, v) in parent {
+        target.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+}
+
+/// Resolves inherited attributes by walking up all ancestor group paths.
+pub fn resolve_ancestor_attributes(
+    group_attrs: &HashMap<String, HashMap<String, String>>,
+    var_path: &str,
+) -> HashMap<String, String> {
+    let mut merged = HashMap::new();
+    let mut cur = var_path.trim_matches('/');
+    while let Some(idx) = cur.rfind('/') {
+        cur = &cur[..idx];
+        if let Some(attrs) = group_attrs.get(cur) {
+            merge_parent_attributes(&mut merged, attrs);
+        }
+    }
+    if let Some(root_attrs) = group_attrs.get("") {
+        merge_parent_attributes(&mut merged, root_attrs);
+    }
+    merged
+}
+
 /// Extracts `VariableInfo` directly from `NodeMetadata` in memory with optional parent group attribute inheritance.
 pub fn variable_info_from_node_metadata_with_parent_attributes(
     var_name: &str,
@@ -286,11 +316,7 @@ pub fn variable_info_from_node_metadata_with_parent_attributes(
 
             // Inherit group-level attributes (e.g. DGGS conventions) if not overridden by the array
             if let Some(parent_attrs) = parent_attributes {
-                for (k, v) in parent_attrs {
-                    if !cf_attrs.attributes.contains_key(k) {
-                        cf_attrs.attributes.insert(k.clone(), v.clone());
-                    }
-                }
+                merge_parent_attributes(&mut cf_attrs.attributes, parent_attrs);
             }
 
             let explicit_dim_names: Option<Vec<Option<String>>> = val
@@ -352,7 +378,7 @@ pub fn extract_store_variables_from_consolidated_metadata(
     // 1. First pass: collect all group attributes by group path
     let mut group_attrs: HashMap<String, HashMap<String, String>> = HashMap::new();
     for (node_path, node_meta) in metadata {
-        let clean_path = node_path.trim_start_matches('/').trim_end_matches('/');
+        let clean_path = node_path.trim_matches('/');
         if matches!(node_meta, NodeMetadata::Group(_)) {
             let attrs = extract_group_attributes_from_node_metadata(node_meta);
             if !attrs.is_empty() {
@@ -361,10 +387,10 @@ pub fn extract_store_variables_from_consolidated_metadata(
         }
     }
 
-    // 2. Second pass: extract array variables with inherited attributes
+    // 2. Second pass: extract array variables with inherited ancestor attributes
     let mut variables = Vec::new();
     for (node_path, node_meta) in metadata {
-        let clean_path = node_path.trim_start_matches('/').trim_end_matches('/');
+        let clean_path = node_path.trim_matches('/');
         let var_name = if clean_path.is_empty() {
             "data"
         } else {
@@ -372,21 +398,15 @@ pub fn extract_store_variables_from_consolidated_metadata(
         };
 
         if matches!(node_meta, NodeMetadata::Array(_)) {
-            // Find parent group path (e.g. "measurements/aod" for "measurements/aod/aod550")
-            let parent_group = if let Some(idx) = clean_path.rfind('/') {
-                &clean_path[..idx]
+            let inherited = resolve_ancestor_attributes(&group_attrs, clean_path);
+            let parent_ref = if inherited.is_empty() {
+                None
             } else {
-                ""
+                Some(&inherited)
             };
 
-            let parent_attrs = group_attrs
-                .get(parent_group)
-                .or_else(|| group_attrs.get(""));
-
             if let Some(var_info) = variable_info_from_node_metadata_with_parent_attributes(
-                var_name,
-                node_meta,
-                parent_attrs,
+                var_name, node_meta, parent_ref,
             ) {
                 variables.push(var_info);
             }
@@ -479,9 +499,7 @@ fn discover_child_nodes_recursive(
                     let mut child_attrs = parent_attrs.clone();
                     let group_specific =
                         extract_group_attributes_from_node_metadata(child.metadata());
-                    for (k, v) in group_specific {
-                        child_attrs.insert(k, v);
-                    }
+                    merge_parent_attributes(&mut child_attrs, &group_specific);
 
                     if let Ok(child_path) = NodePath::new(path_str) {
                         discover_child_nodes_recursive(store, &child_path, &child_attrs, variables);
@@ -626,37 +644,37 @@ pub fn discover_arrays_via_http_metadata(base_url: &str) -> Vec<VariableInfo> {
                         .map(ParsedCfAttributes::from_json_map)
                         .unwrap_or_default();
 
-                    // Inherit parent group attributes (e.g. DGGS conventions)
-                    let parent_group = if let Some(idx) = var_name.rfind('/') {
-                        &var_name[..idx]
-                    } else {
-                        ""
-                    };
-                    let parent_zattrs_key = if parent_group.is_empty() {
-                        ".zattrs".to_string()
-                    } else {
-                        format!("{}/.zattrs", parent_group)
-                    };
-                    let parent_zarr_key = if parent_group.is_empty() {
-                        "zarr.json".to_string()
-                    } else {
-                        format!("{}/zarr.json", parent_group)
-                    };
-
-                    if let Some(parent_val) = metadata_obj
-                        .get(&parent_zattrs_key)
-                        .or_else(|| metadata_obj.get(&parent_zarr_key))
-                        .or_else(|| metadata_obj.get(".zattrs"))
+                    // Inherit ancestor group attributes (e.g. DGGS conventions)
+                    let mut cur = var_name.as_str();
+                    while let Some(idx) = cur.rfind('/') {
+                        cur = &cur[..idx];
+                        let parent_zattrs = format!("{cur}/.zattrs");
+                        let parent_zarr = format!("{cur}/zarr.json");
+                        if let Some(parent_val) = metadata_obj
+                            .get(&parent_zattrs)
+                            .or_else(|| metadata_obj.get(&parent_zarr))
+                        {
+                            let p_attrs_obj = parent_val
+                                .get("attributes")
+                                .and_then(|a| a.as_object())
+                                .or_else(|| parent_val.as_object());
+                            if let Some(p_obj) = p_attrs_obj {
+                                let p_cf = ParsedCfAttributes::from_json_map(p_obj);
+                                merge_parent_attributes(&mut cf_attrs.attributes, &p_cf.attributes);
+                            }
+                        }
+                    }
+                    if let Some(root_val) = metadata_obj
+                        .get(".zattrs")
+                        .or_else(|| metadata_obj.get("zarr.json"))
                     {
-                        let p_attrs_obj = parent_val
+                        let p_attrs_obj = root_val
                             .get("attributes")
                             .and_then(|a| a.as_object())
-                            .or_else(|| parent_val.as_object());
+                            .or_else(|| root_val.as_object());
                         if let Some(p_obj) = p_attrs_obj {
                             let p_cf = ParsedCfAttributes::from_json_map(p_obj);
-                            for (k, v) in p_cf.attributes {
-                                cf_attrs.attributes.entry(k).or_insert(v);
-                            }
+                            merge_parent_attributes(&mut cf_attrs.attributes, &p_cf.attributes);
                         }
                     }
 

@@ -210,3 +210,83 @@ fn test_consolidated_metadata_group_to_array_inheritance() {
     assert_eq!(dggs.refinement_level, Some(6));
     assert_eq!(dggs.spatial_dimension, "cells");
 }
+
+#[test]
+fn test_consolidated_metadata_multi_level_group_inheritance() {
+    use octant::utils::metadata::extract_store_variables_from_consolidated_metadata;
+    use zarrs::node::NodeMetadata;
+
+    // Root group has DGGS convention
+    let root_meta_json = serde_json::json!({
+        "zarr_format": 3,
+        "node_type": "group",
+        "attributes": {
+            "dggs": {
+                "name": "healpix",
+                "refinement_level": 7,
+                "indexing_scheme": "nested",
+                "spatial_dimension": "cells"
+            },
+            "institution": "Octant Org"
+        }
+    });
+
+    // Subgroup has dataset-level metadata
+    let sub_meta_json = serde_json::json!({
+        "zarr_format": 3,
+        "node_type": "group",
+        "attributes": {
+            "dataset_version": "v1.2"
+        }
+    });
+
+    let array_meta_json = serde_json::json!({
+        "zarr_format": 3,
+        "node_type": "array",
+        "shape": [1, 49152],
+        "data_type": "float32",
+        "chunk_grid": {
+            "name": "regular",
+            "configuration": { "chunk_shape": [1, 256] }
+        },
+        "chunk_key_encoding": {
+            "name": "default",
+            "configuration": { "separator": "/" }
+        },
+        "fill_value": 0.0,
+        "codecs": [{ "name": "bytes", "configuration": { "endian": "little" } }],
+        "dimension_names": ["time", "cells"],
+        "attributes": {
+            "units": "K"
+        }
+    });
+
+    let root_node: NodeMetadata = serde_json::from_value(root_meta_json).unwrap();
+    let sub_node: NodeMetadata = serde_json::from_value(sub_meta_json).unwrap();
+    let array_node: NodeMetadata = serde_json::from_value(array_meta_json).unwrap();
+
+    let mut meta_map = HashMap::new();
+    meta_map.insert("".to_string(), root_node);
+    meta_map.insert("atmosphere/model_run_1".to_string(), sub_node);
+    meta_map.insert("atmosphere/model_run_1/temp".to_string(), array_node);
+
+    let variables = extract_store_variables_from_consolidated_metadata(&meta_map);
+    assert_eq!(variables.len(), 1);
+
+    let var = &variables[0];
+    assert_eq!(var.name, "atmosphere/model_run_1/temp");
+    assert_eq!(var.units.as_deref(), Some("K"));
+    assert_eq!(
+        var.attributes.get("dataset_version").map(|s| s.as_str()),
+        Some("v1.2")
+    );
+    assert_eq!(
+        var.attributes.get("institution").map(|s| s.as_str()),
+        Some("Octant Org")
+    );
+
+    let dggs = DggsMetadata::from_attributes(&var.attributes)
+        .expect("Should inherit DGGS from root group");
+    assert_eq!(dggs.name, "healpix");
+    assert_eq!(dggs.refinement_level, Some(7));
+}

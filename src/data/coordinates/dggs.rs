@@ -125,6 +125,12 @@ impl DggsMetadata {
             || contains_ascii_case_insensitive(&self.name, "healpix")
     }
 
+    /// Checks if this DGGS metadata matches a given dimension name as a HEALPix spatial dimension.
+    #[inline]
+    pub fn matches_dim(&self, dim_name: &str) -> bool {
+        self.is_healpix() && self.spatial_dimension.eq_ignore_ascii_case(dim_name)
+    }
+
     /// Resolves the HEALPix `nside` parameter from refinement level ($2^k$) or total pixel count.
     pub fn healpix_nside(&self, actual_dim_size: usize) -> Option<usize> {
         if let Some(level) = self.refinement_level

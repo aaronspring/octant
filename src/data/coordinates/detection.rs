@@ -99,13 +99,9 @@ pub fn detect_grid_from_block(
     let is_dggs_healpix = dggs_opt.as_ref().is_some_and(|d| d.is_healpix());
 
     let is_healpix_x = super::naming::is_healpix_dim_name(x_name)
-        || dggs_opt
-            .as_ref()
-            .is_some_and(|d| d.spatial_dimension.eq_ignore_ascii_case(x_name));
+        || dggs_opt.as_ref().is_some_and(|d| d.matches_dim(x_name));
     let is_healpix_y = super::naming::is_healpix_dim_name(y_name)
-        || dggs_opt
-            .as_ref()
-            .is_some_and(|d| d.spatial_dimension.eq_ignore_ascii_case(y_name));
+        || dggs_opt.as_ref().is_some_and(|d| d.matches_dim(y_name));
 
     let is_healpix_attr = is_dggs_healpix
         || block.attributes.contains_key("healpix_zoom")
@@ -121,13 +117,10 @@ pub fn detect_grid_from_block(
             .is_some_and(|g| super::naming::contains_ascii_case_insensitive(g, "nested"));
 
     let npix = if height == 1 { width } else { width * height };
-    let nside_opt = if let Some(ref dggs) = dggs_opt
-        && dggs.is_healpix()
-    {
-        dggs.healpix_nside(npix)
-    } else {
-        super::healpix::npix_to_nside(npix)
-    };
+    let nside_opt = dggs_opt
+        .as_ref()
+        .and_then(|d| d.healpix_nside(npix))
+        .or_else(|| super::healpix::npix_to_nside(npix));
 
     if (is_healpix_x || is_healpix_y || is_healpix_attr)
         && let Some(nside) = nside_opt

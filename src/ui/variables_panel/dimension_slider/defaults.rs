@@ -33,11 +33,8 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
             .first()
             .map(|s| s.as_str())
             .unwrap_or("");
-        let is_grid = if let Some(ref dggs) = dggs_opt {
-            dggs.is_healpix() && dggs.spatial_dimension.eq_ignore_ascii_case(dim_name)
-        } else {
-            crate::data::coordinates::naming::is_healpix_dim_name(dim_name)
-        };
+        let is_grid = dggs_opt.as_ref().is_some_and(|d| d.matches_dim(dim_name))
+            || crate::data::coordinates::naming::is_healpix_dim_name(dim_name);
         app.dim_config[0].spatial = if is_grid {
             SpatialRole::Grid
         } else {
@@ -59,13 +56,8 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
             .get(i)
             .map(|s| s.as_str())
             .unwrap_or("");
-        if let Some(ref dggs) = dggs_opt
-            && dggs.is_healpix()
-            && dggs.spatial_dimension.eq_ignore_ascii_case(name)
-        {
-            return true;
-        }
-        crate::data::coordinates::naming::is_healpix_dim_name(name)
+        dggs_opt.as_ref().is_some_and(|d| d.matches_dim(name))
+            || crate::data::coordinates::naming::is_healpix_dim_name(name)
     });
 
     if let Some(grid_i) = healpix_dim_idx {
