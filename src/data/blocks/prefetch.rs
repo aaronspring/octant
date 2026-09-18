@@ -106,7 +106,7 @@ impl BlockPrefetcher {
                         completed_atomic.fetch_add(chunk_bytes, Ordering::Relaxed);
                     }
                 };
-                let result = crate::data::backends::wasm_zarr::load_one_wasm_with_progress(
+                let result = crate::data::backends::zarr::load_one_wasm_with_progress(
                     &request,
                     Some(&mut on_progress),
                 )

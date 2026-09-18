@@ -1,21 +1,19 @@
-//! Zarr implementation of the generic BlockStore abstraction.
+//! Concrete `ZarrBlockStore` implementation over `ReadableWritableListableStorage`.
 
-use super::{generic_zarr::GenericZarrBlockStore, zarr_storage};
-use crate::data::{
-    blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback},
-    octant_block::OctantBlock,
-    slice_request::SliceRequest,
-};
+use super::generic::GenericZarrBlockStore;
+use super::storage;
+use crate::data::DatasetMetadata;
+use crate::data::blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback};
+use crate::data::octant_block::OctantBlock;
+use crate::data::slice_request::SliceRequest;
+use zarrs::storage::ReadableWritableListableStorage;
 
 pub struct ZarrBlockStore {
     inner: GenericZarrBlockStore,
 }
 
 impl ZarrBlockStore {
-    pub fn new(
-        storage: zarrs::storage::ReadableWritableListableStorage,
-        source_url: impl Into<String>,
-    ) -> Self {
+    pub fn new(storage: ReadableWritableListableStorage, source_url: impl Into<String>) -> Self {
         Self {
             inner: GenericZarrBlockStore::new(storage, source_url, "zarr", "Zarr"),
         }
@@ -26,12 +24,12 @@ impl ZarrBlockStore {
     }
 
     pub fn open_local(path: &str) -> Result<Self, BlockStoreError> {
-        let storage = zarr_storage::open_local_storage(path).map_err(|e| format!("{e}"))?;
+        let storage = storage::open_local_storage(path).map_err(|e| format!("{e}"))?;
         Ok(Self::new(storage, path))
     }
 
     pub fn open_remote(url: &str) -> Result<Self, BlockStoreError> {
-        let storage = zarr_storage::build_sync_store(url).map_err(|e| format!("{e}"))?;
+        let storage = storage::build_sync_store(url).map_err(|e| format!("{e}"))?;
         Ok(Self::new(storage, url.trim_end_matches('/')))
     }
 }
@@ -45,7 +43,7 @@ impl BlockStore for ZarrBlockStore {
         self.inner.variables()
     }
 
-    fn inspect(&self) -> Result<crate::data::DatasetMetadata, BlockStoreError> {
+    fn inspect(&self) -> Result<DatasetMetadata, BlockStoreError> {
         self.inner.inspect()
     }
 

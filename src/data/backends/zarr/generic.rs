@@ -1,13 +1,13 @@
-//! Generic BlockStore implementation over any zarrs ReadableWritableListableStorage.
+//! Generic `GenericZarrBlockStore` implementation over `ReadableWritableListableStorage`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::data::{
-    blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback},
-    octant_block::OctantBlock,
-    slice_request::SliceRequest,
-};
+use super::block::fetch_block_from_cached_array;
+use crate::data::DatasetMetadata;
+use crate::data::blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback};
+use crate::data::octant_block::OctantBlock;
+use crate::data::slice_request::SliceRequest;
 use zarrs::array::Array;
 use zarrs::array::chunk_cache::ChunkCacheDecodedLruSizeLimit;
 use zarrs::group::Group;
@@ -83,7 +83,6 @@ impl GenericZarrBlockStore {
         drop(cache_guard);
 
         let var_path = format!("/{clean_name}");
-
         let readable_store: ReadableStorage = self.storage.clone();
 
         let raw_array = if let Ok(group) = Group::open(self.storage.clone(), "/")
@@ -130,7 +129,6 @@ impl GenericZarrBlockStore {
             single_chunk_bytes
         );
 
-        // Cache at least 8 full chunks per variable, clamped between 64 MB and 512 MB
         let dynamic_cache_bytes = if self.chunk_cache_bytes != DEFAULT_CHUNK_CACHE_BYTES {
             self.chunk_cache_bytes
         } else {
@@ -155,7 +153,6 @@ impl GenericZarrBlockStore {
     /// Total number of opened array variables cached in this store handle.
     pub fn cached_arrays_count(&self) -> usize {
         let cache_guard = self.array_cache.read().unwrap_or_else(|p| p.into_inner());
-
         cache_guard.len()
     }
 
@@ -180,17 +177,18 @@ impl BlockStore for GenericZarrBlockStore {
         Ok(vars.into_iter().map(|v| v.name).collect())
     }
 
-    fn inspect(&self) -> Result<crate::data::DatasetMetadata, BlockStoreError> {
+    fn inspect(&self) -> Result<DatasetMetadata, BlockStoreError> {
         let base_url = self.source_url.trim_end_matches('/');
         let variables =
             crate::utils::extract_store_variables_consolidated(self.storage.clone(), base_url)
                 .map_err(|e| e.to_string())?;
 
-        let dimension_coordinates = crate::utils::fetch_all_dimension_coordinates_for_variables(
-            self.storage.clone(),
-            &variables,
-            Some(base_url),
-        );
+        let dimension_coordinates =
+            crate::data::backends::coord_bounds::fetch_all_dimension_coordinates_for_variables(
+                self.storage.clone(),
+                &variables,
+                Some(base_url),
+            );
 
         let default_name = format!("{}_store", self.backend_name);
         let dataset_name = base_url
@@ -199,7 +197,7 @@ impl BlockStore for GenericZarrBlockStore {
             .unwrap_or(&default_name)
             .to_string();
 
-        Ok(crate::data::DatasetMetadata {
+        Ok(DatasetMetadata {
             name: dataset_name,
             store_type: self.store_type_label.to_string(),
             variables,
@@ -217,7 +215,7 @@ impl BlockStore for GenericZarrBlockStore {
         on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         let (array, cache) = self.get_or_open_array(&request.variable)?;
-        super::zarr_block::fetch_block_from_cached_array(
+        fetch_block_from_cached_array(
             &array,
             &cache,
             self.storage.clone(),

@@ -19,7 +19,7 @@ use crate::data::DatasetMetadata;
 #[cfg(target_arch = "wasm32")]
 use crate::data::VariableInfo;
 #[cfg(target_arch = "wasm32")]
-use crate::data::backends::wasm_zarr::fetch_url_bytes;
+use crate::data::backends::http::fetch_url_bytes;
 #[cfg(target_arch = "wasm32")]
 use crate::utils::metadata::{open_or_instantiate_array_normalized, variable_info_from_array};
 #[cfg(target_arch = "wasm32")]

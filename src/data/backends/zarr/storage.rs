@@ -16,8 +16,7 @@ use zarrs::storage::storage_adapter::async_to_sync::AsyncToSyncStorageAdapter;
 use zarrs_object_store::AsyncObjectStore;
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Builds a synchronous Zarr storage adapter over HTTP object_store, for
-/// remote sources.
+/// Builds a synchronous Zarr storage adapter over HTTP object_store, for remote sources.
 pub fn build_sync_store(
     url: &str,
 ) -> Result<ReadableWritableListableStorage, Box<dyn Error + Send + Sync>> {
@@ -35,7 +34,6 @@ pub fn build_sync_store(
         .build()?;
 
     let async_store = Arc::new(AsyncObjectStore::new(http_store));
-
     let rt = get_shared_tokio_rt();
 
     let sync_store: ReadableWritableListableStorage = Arc::new(AsyncToSyncStorageAdapter::new(

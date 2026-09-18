@@ -38,6 +38,7 @@ fn main() -> eframe::Result<()> {
 fn main() {
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
+    data::codecs::register_wasm_codecs();
 
     let web_options = eframe::WebOptions {
         depth_buffer: 32,

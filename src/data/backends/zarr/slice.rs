@@ -1,3 +1,5 @@
+//! Dtype conversion, calibration, and array subset retrieval as f32 through an optional chunk cache.
+
 use crate::data::DataCalibration;
 use crate::data::blocks::BlockStoreError;
 use zarrs::array::chunk_cache::{ChunkCache, ChunkCacheDecodedLruSizeLimit};

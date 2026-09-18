@@ -8,8 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use icechunk_format::manifest::{Manifest, ManifestRef};
 
 use crate::data::DatasetMetadata;
-use crate::data::backends::wasm_zarr::WasmZarrBlockStore;
-use crate::data::backends::zarr_block::fetch_block_with_progress;
+use crate::data::backends::zarr::{WasmZarrBlockStore, fetch_block_with_progress};
 use crate::data::blocks::{BlockStore, BlockStoreError, ProgressCallback};
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::SliceRequest;

@@ -1,12 +1,18 @@
-//! Storage initializers for Icechunk repositories.
+//! Desktop Icechunk storage and `IcechunkBlockStore` implementation.
 
+use std::collections::HashMap;
+use std::error::Error;
+use std::sync::{Arc, OnceLock, RwLock};
+
+use crate::data::DatasetMetadata;
+use crate::data::backends::zarr::GenericZarrBlockStore;
+use crate::data::blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback};
+use crate::data::octant_block::OctantBlock;
+use crate::data::slice_request::SliceRequest;
 use crate::utils::executor::{TokioBlockOn, get_shared_tokio_rt};
 use crate::utils::remote::{
     build_icechunk_s3_options, parse_remote_storage_url, register_standard_virtual_chunk_containers,
 };
-use std::collections::HashMap;
-use std::error::Error;
-use std::sync::{Arc, OnceLock, RwLock};
 use zarrs::storage::ReadableWritableListableStorage;
 use zarrs::storage::storage_adapter::async_to_sync::AsyncToSyncStorageAdapter;
 use zarrs_icechunk::AsyncIcechunkStore;
@@ -90,4 +96,55 @@ pub fn build_sync_icechunk_store(
     }
 
     Ok(sync_store)
+}
+
+pub struct IcechunkBlockStore {
+    inner: GenericZarrBlockStore,
+}
+
+impl IcechunkBlockStore {
+    pub fn new(storage: ReadableWritableListableStorage, source_url: impl Into<String>) -> Self {
+        Self {
+            inner: GenericZarrBlockStore::new(storage, source_url, "icechunk", "Icechunk"),
+        }
+    }
+
+    pub fn source_url(&self) -> &str {
+        self.inner.source_url()
+    }
+
+    pub fn open(location: &str) -> Result<Self, BlockStoreError> {
+        let storage = build_sync_icechunk_store(location).map_err(|e| e.to_string())?;
+        Ok(Self::new(storage, location.trim_end_matches('/')))
+    }
+}
+
+impl BlockStore for IcechunkBlockStore {
+    fn backend_name(&self) -> &str {
+        self.inner.backend_name()
+    }
+
+    fn variables(&self) -> Result<Vec<String>, BlockStoreError> {
+        self.inner.variables()
+    }
+
+    fn inspect(&self) -> Result<DatasetMetadata, BlockStoreError> {
+        self.inner.inspect()
+    }
+
+    fn fetch_block(&self, request: &SliceRequest) -> Result<OctantBlock, BlockStoreError> {
+        self.inner.fetch_block(request)
+    }
+
+    fn fetch_block_with_progress(
+        &self,
+        request: &SliceRequest,
+        on_progress: ProgressCallback,
+    ) -> Result<OctantBlock, BlockStoreError> {
+        self.inner.fetch_block_with_progress(request, on_progress)
+    }
+
+    fn fetch_blocks(&self, requests: &[SliceRequest]) -> Result<BlockResult, BlockStoreError> {
+        self.inner.fetch_blocks(requests)
+    }
 }
