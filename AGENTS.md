@@ -15,8 +15,15 @@ When developing and reviewing code in this repository:
    - Follow the Open-Closed Principle (OCP): decompose monolithic modules into single-purpose submodules (< 250 lines per file, < 50 lines per function).
    - **Data Engine Subsystems (`src/data/`)**:
      - **Blocks Engine (`src/data/blocks/`)**: `cache.rs` (LRU memory cache), `key.rs` (`BlockKey`), `loader.rs` (async background workers), `prefetch.rs` (`BlockPrefetcher`), `request.rs` (`SliceRequest`), `store.rs` (`BlockStore` trait), `summary.rs` (`BlockSummary`), `tests.rs`, `mod.rs`.
-     - **Coordinates (`src/data/coordinates/`)**: `naming.rs` (dimension role inference & ASCII case-insensitive searches), `detection.rs`, `healpix.rs`, `regular.rs`, `topology.rs`.
-     - **Backends (`src/data/backends/`)**: `coord_bounds.rs` (unified coordinate range bounds extraction), `generic_zarr.rs`, `icechunk.rs`, `netcdf.rs`, `procedural.rs`, `wasm_zarr.rs`.
+     - **Backends (`src/data/backends/`)**:
+       - `http/`: `fetch.rs`, `mod.rs` (Browser `window.fetch` and Desktop `reqwest` range requests).
+       - `coord_bounds/`: `cache.rs`, `candidates.rs`, `discover.rs`, `extract.rs`, `tests.rs`, `mod.rs` (Unified coordinate boundary resolution & global cache).
+       - `zarr/`: `block.rs`, `generic.rs`, `slice.rs`, `storage.rs`, `store.rs`, `zstd_shim.rs`, `wasm/` (`inspect.rs`, `loader.rs`, `preload.rs`, `store.rs`, `mod.rs`), `mod.rs`.
+       - `icechunk/`: `native.rs`, `wasm/` (`discovery.rs`, `header.rs`, `inspect.rs`, `loader.rs`, `preload.rs`, `store.rs`, `tests.rs`, `mod.rs`), `mod.rs`.
+       - `netcdf/`: `attrs.rs`, `coords.rs`, `desktop.rs`, `inspect.rs`, `slice.rs`, `wasm.rs`, `tests.rs`, `mod.rs`.
+       - `procedural/`: `healpix.rs`, `healpix_meta.rs`, `inspect.rs`, `slice_2d.rs`, `slice_3d.rs`, `store.rs`, `tests.rs`, `mod.rs`.
+     - **Codecs (`src/data/codecs/`)**: `blusc_plugin.rs` (Pure Rust Blosc `zarrs` codec plugin), `zstd_plugin.rs` (Pure Rust Zstandard `zarrs` codec plugin), `normalize.rs` (v3 metadata ordering & pipeline normalization), `tests.rs`, `mod.rs`.
+     - **Coordinates (`src/data/coordinates/`)**: `naming.rs` (dimension role inference & ASCII case-insensitive searches), `detection.rs`, `dggs.rs`, `lut.rs`, `ordering.rs`, `regular.rs`, `same_geometry.rs`, `search.rs`, `topology.rs`, `types.rs`, `healpix/`, `topologies/`, `impl_topology/`.
      - **Data Slicing (`src/data/slicing/`)**: `common.rs` (math & range clamping), `coords.rs` (sliced coordinate extraction), `copy.rs` (strided & contiguous copy routines), `slice_1d.rs` (1D/0D slabs), `slice_2d.rs` (2D hyperslabs), `slice_3d.rs` (3D volumetric slabs).
      - Store tensor values in `Arc<[f32]>` for $O(1)$ zero-copy sharing between cache and render pipelines.
    - **WGPU Renderers (`src/plots/`)**:
