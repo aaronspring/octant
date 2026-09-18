@@ -19,7 +19,6 @@ pub fn is_healpix_dim_name(dim_name: &str) -> bool {
         || clean.eq_ignore_ascii_case("cells")
         || clean.eq_ignore_ascii_case("pix")
         || clean.eq_ignore_ascii_case("pixels")
-        || clean.eq_ignore_ascii_case("healpix")
         || clean.eq_ignore_ascii_case("ncells")
         || contains_ascii_case_insensitive(clean, "healpix")
 }
@@ -46,7 +45,6 @@ pub fn is_spatial_z_name(dim_name: &str) -> bool {
     let clean = dim_name.trim();
     clean.eq_ignore_ascii_case("z")
         || contains_ascii_case_insensitive(clean, "depth")
-        || contains_ascii_case_insensitive(clean, "level")
         || contains_ascii_case_insensitive(clean, "lev")
         || contains_ascii_case_insensitive(clean, "layer")
         || contains_ascii_case_insensitive(clean, "height")
@@ -64,7 +62,7 @@ pub fn is_animated_time_name(dim_name: &str) -> bool {
 
 /// Formats a dimension name into a human-friendly axis title with standard units.
 pub fn format_dimension_axis_title(dim_name: &str) -> String {
-    let clean = dim_name.trim().to_lowercase();
+    let clean = dim_name.trim();
     if clean.is_empty() {
         return "Index".to_string();
     }
@@ -72,17 +70,23 @@ pub fn format_dimension_axis_title(dim_name: &str) -> String {
         return dim_name.to_string();
     }
 
-    if is_healpix_dim_name(&clean) {
+    if is_healpix_dim_name(clean) {
         format!("{dim_name} [Cell Index]")
-    } else if clean.contains("lon") {
+    } else if contains_ascii_case_insensitive(clean, "lon") {
         format!("{dim_name} [°E]")
-    } else if clean.contains("lat") {
+    } else if contains_ascii_case_insensitive(clean, "lat") {
         format!("{dim_name} [°N]")
-    } else if clean.contains("depth") || clean.contains("height") || clean.contains("alt") {
+    } else if contains_ascii_case_insensitive(clean, "depth")
+        || contains_ascii_case_insensitive(clean, "height")
+        || contains_ascii_case_insensitive(clean, "alt")
+    {
         format!("{dim_name} [m]")
-    } else if clean.contains("time") {
+    } else if contains_ascii_case_insensitive(clean, "time") {
         dim_name.to_string()
-    } else if clean == "x" || clean == "y" || clean == "z" {
+    } else if clean.eq_ignore_ascii_case("x")
+        || clean.eq_ignore_ascii_case("y")
+        || clean.eq_ignore_ascii_case("z")
+    {
         format!("{dim_name} Index")
     } else {
         dim_name.to_string()

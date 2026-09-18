@@ -4425,6 +4425,7 @@ dependencies = [
  "egui",
  "env_logger",
  "flate2",
+ "futures",
  "getrandom 0.4.3",
  "glam",
  "icechunk",

@@ -22,7 +22,6 @@ use crate::data::slice_request::SliceRequest;
 use crate::data::{DatasetMetadata, VariableInfo};
 use crate::utils::metadata::{
     ParsedCfAttributes, open_or_instantiate_array_normalized, variable_info_from_array,
-    variable_info_from_node_metadata,
 };
 use crate::utils::units::calculate_variable_size_bytes;
 
@@ -276,40 +275,25 @@ impl WasmZarrBlockStore {
             chunk_ranges.push(c_start..c_end);
         }
 
-        // Iterate over Cartesian product of chunk indices
+        // 1. Collect all missing chunk keys that need to be fetched
+        let mut missing_chunks: Vec<(String, String)> = Vec::new();
         let mut current = chunk_ranges.iter().map(|r| r.start).collect::<Vec<u64>>();
         loop {
             let chunk_rel_key = array.chunk_key(&current);
             let store_key_str = chunk_rel_key.as_str().to_string();
 
-            if !self.has_key(&store_key_str) {
-                let chunk_url = format!("{}/{}", self.base_url, store_key_str);
-                log::info!("[WASM Zarr] Fetching chunk: {chunk_url}");
+            let full_chunk_key = if clean_var.is_empty()
+                || clean_var == "data"
+                || store_key_str.starts_with(clean_var)
+            {
+                store_key_str
+            } else {
+                format!("{clean_var}/{store_key_str}")
+            };
 
-                match fetch_url_bytes(&chunk_url).await {
-                    Ok(chunk_bytes) => {
-                        let bytes_len = chunk_bytes.len() as u64;
-                        log::info!(
-                            "[WASM Zarr] Fetched chunk {store_key_str} ({} bytes)",
-                            bytes_len
-                        );
-                        self.insert_key_bytes(&store_key_str, &chunk_bytes)?;
-
-                        if let Some(ref mut cb) = on_progress {
-                            cb(bytes_len);
-                        }
-                    }
-                    Err(err) if err.contains("HTTP 404") => {
-                        log::warn!(
-                            "[WASM Zarr] Chunk not found (HTTP 404 / sparse chunk): {chunk_url}"
-                        );
-                        // In Zarr specification, missing chunks are treated as fill value.
-                    }
-                    Err(err) => {
-                        log::error!("[WASM Zarr] Failed to fetch chunk '{chunk_url}': {err}");
-                        return Err(format!("Failed to fetch chunk '{chunk_url}': {err}").into());
-                    }
-                }
+            if !self.has_key(&full_chunk_key) {
+                let chunk_url = format!("{}/{}", self.base_url, full_chunk_key);
+                missing_chunks.push((full_chunk_key, chunk_url));
             }
 
             // Advance chunk indices
@@ -327,18 +311,64 @@ impl WasmZarrBlockStore {
             }
         }
 
-        // Preload associated 1D coordinate arrays (e.g. lat, lon, time) for spatial bounds & axes
+        // 2. Concurrently download chunks in parallel batches
+        if !missing_chunks.is_empty() {
+            log::info!(
+                "[WASM Zarr] Preloading {} chunk(s) concurrently for '{}'",
+                missing_chunks.len(),
+                clean_var
+            );
+            const CONCURRENT_BATCH_SIZE: usize = 32;
+            for batch in missing_chunks.chunks(CONCURRENT_BATCH_SIZE) {
+                let futures_batch: Vec<_> = batch
+                    .iter()
+                    .map(|(key, url)| async move { (key, url, fetch_url_bytes(url).await) })
+                    .collect();
+
+                let results = futures::future::join_all(futures_batch).await;
+                for (key, url, res) in results {
+                    match res {
+                        Ok(chunk_bytes) => {
+                            let bytes_len = chunk_bytes.len() as u64;
+                            self.insert_key_bytes(key, &chunk_bytes)?;
+                            if let Some(ref mut cb) = on_progress {
+                                cb(bytes_len);
+                            }
+                        }
+                        Err(err) if err.contains("HTTP 404") => {
+                            log::warn!(
+                                "[WASM Zarr] Chunk not found (HTTP 404 / sparse chunk): {url}"
+                            );
+                        }
+                        Err(err) => {
+                            log::error!("[WASM Zarr] Failed to fetch chunk '{url}': {err}");
+                            return Err(format!("Failed to fetch chunk '{url}': {err}").into());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Preload associated 1D coordinate arrays (e.g. lat, lon, time, cell_ids) for spatial bounds & axes
         if rank > 1 {
             let dim_names = crate::utils::resolve_array_dimension_names(&array);
+            let group_prefix = clean_var.rfind('/').map(|idx| &clean_var[..idx]);
             for dim in dim_names {
                 let clean = dim.trim().trim_start_matches('/').to_string();
-                let coord_path = format!("/{clean}");
-                if let Ok(coord_array) =
-                    open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
-                    && coord_array.shape().len() == 1
-                {
-                    let count = coord_array.shape().first().copied().unwrap_or(0);
-                    self.preload_boundary_chunks_1d(&clean, count).await;
+                let mut paths = vec![format!("/{clean}")];
+                if let Some(gp) = group_prefix {
+                    paths.push(format!("/{gp}/{clean}"));
+                }
+                for coord_path in paths {
+                    let target_name = coord_path.trim_start_matches('/').to_string();
+                    if let Ok(coord_array) =
+                        open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
+                        && coord_array.shape().len() == 1
+                    {
+                        let count = coord_array.shape().first().copied().unwrap_or(0);
+                        self.preload_boundary_chunks_1d(&target_name, count).await;
+                        break;
+                    }
                 }
             }
         }
@@ -365,14 +395,25 @@ impl WasmZarrBlockStore {
         let coord_candidates =
             crate::data::backends::coord_bounds::collect_coordinate_candidates(variables);
 
-        for coord_name in coord_candidates {
-            let coord_path = format!("/{coord_name}");
-            if let Ok(coord_array) =
-                open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
-                && coord_array.shape().len() == 1
-            {
-                let count = coord_array.shape().first().copied().unwrap_or(0);
-                self.preload_boundary_chunks_1d(&coord_name, count).await;
+        for coord_name in &coord_candidates {
+            let clean = coord_name.trim().trim_start_matches('/').to_string();
+            let mut paths_to_try = vec![format!("/{clean}")];
+            for var in variables {
+                if let Some(gp) = var.group_path() {
+                    paths_to_try.push(format!("/{gp}/{clean}"));
+                }
+            }
+
+            for cp in paths_to_try {
+                let target_name = cp.trim_start_matches('/').to_string();
+                if let Ok(coord_array) =
+                    open_or_instantiate_array_normalized(self.memory_store.clone(), &cp)
+                    && coord_array.shape().len() == 1
+                {
+                    let count = coord_array.shape().first().copied().unwrap_or(0);
+                    self.preload_boundary_chunks_1d(&target_name, count).await;
+                    break;
+                }
             }
         }
     }
@@ -446,6 +487,10 @@ impl BlockStore for WasmZarrBlockStore {
         .into())
     }
 
+    fn fetch_block(&self, request: &SliceRequest) -> Result<OctantBlock, BlockStoreError> {
+        self.fetch_block_with_progress(request, None)
+    }
+
     fn fetch_block_with_progress(
         &self,
         request: &SliceRequest,
@@ -480,6 +525,10 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
             for (k, v) in metadata_map {
                 if let Ok(json_str) = serde_json::to_string(v) {
                     let _ = store.insert_key_bytes(k, json_str.as_bytes());
+                    let clean_k = k.trim_start_matches('/');
+                    if clean_k != k {
+                        let _ = store.insert_key_bytes(clean_k, json_str.as_bytes());
+                    }
                 }
             }
         }
@@ -533,11 +582,34 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
                         format!("{var_name}/.zattrs")
                     };
 
-                    let cf_attrs = metadata_obj
+                    let mut cf_attrs = metadata_obj
                         .get(&attrs_key)
                         .and_then(|a| a.as_object())
                         .map(ParsedCfAttributes::from_json_map)
                         .unwrap_or_default();
+
+                    // Inherit ancestor group attributes (e.g. DGGS conventions)
+                    for ancestor in crate::utils::path::ancestor_paths(&var_name) {
+                        let p_val = if ancestor.is_empty() {
+                            metadata_obj.get(".zattrs")
+                        } else {
+                            let parent_zattrs = format!("{ancestor}/.zattrs");
+                            metadata_obj.get(&parent_zattrs)
+                        };
+                        if let Some(parent_val) = p_val {
+                            let p_attrs_obj = parent_val
+                                .get("attributes")
+                                .and_then(|a| a.as_object())
+                                .or_else(|| parent_val.as_object());
+                            if let Some(p_obj) = p_attrs_obj {
+                                let p_cf = ParsedCfAttributes::from_json_map(p_obj);
+                                crate::utils::metadata::merge_parent_attributes(
+                                    &mut cf_attrs.attributes,
+                                    &p_cf.attributes,
+                                );
+                            }
+                        }
+                    }
 
                     let dimension_names = cf_attrs.resolve_dimension_names(None, shape.len());
                     let file_size = calculate_variable_size_bytes(&shape, &data_type);
@@ -571,14 +643,35 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
         let _ = store.insert_key_bytes("zarr.json", &v3_bytes);
 
         if let Ok(group) = Group::open(store.memory_store.clone(), "/") {
-            let mut variables = Vec::new();
-            if let Some(ConsolidatedMetadata { metadata, .. }) = group.consolidated_metadata() {
-                for (name, node_meta) in metadata {
-                    if let Some(var_info) = variable_info_from_node_metadata(&name, &node_meta) {
-                        variables.push(var_info);
+            let variables = if let Some(ConsolidatedMetadata { metadata, .. }) =
+                group.consolidated_metadata()
+            {
+                for (node_path, node_meta) in &metadata {
+                    let clean_path = node_path.trim_matches('/');
+                    if let Ok(json_bytes) = serde_json::to_vec(node_meta) {
+                        if clean_path.is_empty() {
+                            let _ = store.insert_key_bytes("zarr.json", &json_bytes);
+                        } else {
+                            let _ = store
+                                .insert_key_bytes(&format!("{clean_path}/zarr.json"), &json_bytes);
+                            let _ = store.insert_key_bytes(
+                                &format!("meta/root/{clean_path}.array.json"),
+                                &json_bytes,
+                            );
+                            let _ = store.insert_key_bytes(
+                                &format!("meta/root/{clean_path}.group.json"),
+                                &json_bytes,
+                            );
+                        }
                     }
                 }
-            }
+
+                crate::utils::metadata::extract_store_variables_from_consolidated_metadata(
+                    &metadata,
+                )
+            } else {
+                Vec::new()
+            };
 
             if !variables.is_empty() {
                 return Ok(store.finalize_metadata(variables, clean_url).await);

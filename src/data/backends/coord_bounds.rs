@@ -30,6 +30,15 @@ pub fn collect_coordinate_candidates(variables: &[crate::data::VariableInfo]) ->
                 coord_candidates.push(clean);
             }
         }
+        if let Some(dggs) =
+            crate::data::coordinates::dggs::DggsMetadata::from_attributes(&var.attributes)
+            && let Some(ref coord_name) = dggs.coordinate
+        {
+            let clean = coord_name.trim().trim_start_matches('/').to_string();
+            if !clean.is_empty() && !coord_candidates.contains(&clean) {
+                coord_candidates.push(clean);
+            }
+        }
     }
 
     // 3. Standard fallback spatial & temporal coordinate aliases

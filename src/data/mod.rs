@@ -26,8 +26,8 @@ pub use blocks::{
 };
 pub use calibration::DataCalibration;
 pub use coordinates::{
-    CartesianTopology, CoordinateGrid, CurvilinearTopology, GridTopology, HealpixTopology,
-    Irregular1DTopology,
+    CartesianTopology, CoordinateGrid, CurvilinearTopology, DggsEllipsoid, DggsMetadata,
+    GridTopology, HealpixTopology, Irregular1DTopology,
 };
 pub use data_source::{DataSource, DataSourceKind};
 pub use dataset::Dataset;
