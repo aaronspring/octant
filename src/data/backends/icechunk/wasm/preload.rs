@@ -10,7 +10,7 @@ use zarrs::array::ArraySubset;
 use super::header::decompress_icechunk_file;
 use super::store::WasmIcechunkBlockStore;
 #[cfg(target_arch = "wasm32")]
-use crate::data::backends::wasm_zarr::{fetch_url_byte_range, fetch_url_bytes};
+use crate::data::backends::http::{fetch_url_byte_range, fetch_url_bytes};
 use crate::data::blocks::{BlockStoreError, ProgressCallback};
 #[cfg(target_arch = "wasm32")]
 use crate::utils::metadata::open_or_instantiate_array_normalized;

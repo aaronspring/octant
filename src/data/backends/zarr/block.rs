@@ -1,28 +1,17 @@
-//! Generic, N-dimensional fetch that returns an `OctantBlock` from a Zarr array.
+//! Zarr block retrieval, slicing, and coordinate binding routines.
 
 use std::collections::HashMap;
-
 use zarrs::array::ArraySubset;
 use zarrs::array::chunk_cache::ChunkCacheDecodedLruSizeLimit;
 use zarrs::storage::ReadableWritableListableStorage;
 
-use super::coord_bounds::get_cached_coord_bounds_scoped;
-use super::generic_zarr::ZarrArrayHandle;
-use super::zarr_slice::retrieve_array_subset_as_f32;
+use super::generic::{GenericZarrBlockStore, ZarrArrayHandle};
+use super::slice::retrieve_array_subset_as_f32;
+use crate::data::backends::coord_bounds::get_cached_coord_bounds_scoped;
 use crate::data::blocks::{BlockStoreError, ProgressCallback};
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::{DimensionSelection, SliceRequest};
 use crate::utils::grid::check_and_orient_block_grid;
-
-/// Fetches an arbitrary-rank hyperslab described by `request` and returns it
-/// as a resident `OctantBlock`.
-pub fn fetch_block(
-    store: ReadableWritableListableStorage,
-    store_url: &str,
-    request: &SliceRequest,
-) -> Result<OctantBlock, BlockStoreError> {
-    fetch_block_with_progress(store, store_url, request, None)
-}
 
 /// Fetches an arbitrary-rank hyperslab from an already-opened `ZarrArrayHandle` through a chunk cache.
 pub fn fetch_block_from_cached_array(
@@ -230,8 +219,7 @@ pub fn fetch_block_with_progress(
     request: &SliceRequest,
     on_progress: ProgressCallback,
 ) -> Result<OctantBlock, BlockStoreError> {
-    let dummy_store =
-        super::generic_zarr::GenericZarrBlockStore::new(store.clone(), store_url, "zarr", "Zarr");
+    let dummy_store = GenericZarrBlockStore::new(store.clone(), store_url, "zarr", "Zarr");
     let (cached_array, cache) = dummy_store.get_or_open_array(&request.variable)?;
     fetch_block_from_cached_array(
         &cached_array,

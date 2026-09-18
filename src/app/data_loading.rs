@@ -157,10 +157,10 @@ impl OctantApp {
             wasm_bindgen_futures::spawn_local(async move {
                 let res = match store_kind {
                     StoreKind::RemoteZarr => {
-                        crate::data::backends::wasm_zarr::inspect_wasm_remote_zarr(&target_clone).await
+                        crate::data::backends::zarr::inspect_wasm_remote_zarr(&target_clone).await
                     }
                     StoreKind::RemoteIcechunk => {
-                        crate::data::backends::wasm_icechunk::inspect_wasm_remote_icechunk(&target_clone).await
+                        crate::data::backends::icechunk::wasm::inspect_wasm_remote_icechunk(&target_clone).await
                     }
                     StoreKind::LocalZarr | StoreKind::LocalIcechunk => {
                         Err("Direct local file paths cannot be read in a browser due to web sandbox security.\n\nTo view local datasets in the browser:\n1. Serve your directory with a local HTTP server: `npx serve` or `python3 -m http.server`\n2. Enter the URL: `http://localhost:8000/my_dataset`\n\nOr run the native desktop version of Octant (`cargo run --release`).".to_string())

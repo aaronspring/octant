@@ -6,6 +6,8 @@ use super::store::WasmIcechunkBlockStore;
 use crate::data::blocks::BlockStore;
 use crate::data::blocks::{BlockRequest, BlockStoreError, ProgressCallback};
 use crate::data::octant_block::OctantBlock;
+#[cfg(target_arch = "wasm32")]
+use crate::utils::metadata::open_or_instantiate_array_normalized;
 
 /// Asynchronously loads one block on WASM for an Icechunk dataset.
 #[cfg(target_arch = "wasm32")]
@@ -19,7 +21,7 @@ pub async fn load_one_icechunk_wasm_with_progress(
         .trim_end_matches('/');
     let store = WasmIcechunkBlockStore::get_or_create(clean_url);
 
-    let shape = request
+    let mut shape = request
         .store
         .inspect()
         .map(|meta| {
@@ -30,6 +32,16 @@ pub async fn load_one_icechunk_wasm_with_progress(
                 .unwrap_or_default()
         })
         .unwrap_or_default();
+
+    if shape.is_empty() {
+        let clean_var = request.slice.variable.trim_matches('/');
+        let var_path = format!("/{clean_var}");
+        if let Ok(array) =
+            open_or_instantiate_array_normalized(store.inner.memory_store.clone(), &var_path)
+        {
+            shape = array.shape().to_vec();
+        }
+    }
 
     let subset = request.slice.to_array_subset(&shape);
     log::info!(

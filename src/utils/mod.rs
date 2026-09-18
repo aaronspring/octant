@@ -17,8 +17,8 @@ pub use crate::data::backends::coord_bounds::{
     fetch_all_dimension_coordinates, fetch_all_dimension_coordinates_for_variables,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::data::backends::icechunk_storage::build_sync_icechunk_store;
-pub use crate::data::backends::zarr_storage::build_sync_store;
+pub use crate::data::backends::icechunk::build_sync_icechunk_store;
+pub use crate::data::backends::zarr::build_sync_store;
 pub use error::OctantError;
 pub use executor::TaskExecutor;
 #[cfg(not(target_arch = "wasm32"))]

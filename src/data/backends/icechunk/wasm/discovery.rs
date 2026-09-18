@@ -8,7 +8,7 @@ use icechunk_format::repo_info::RepoInfo;
 #[cfg(target_arch = "wasm32")]
 use super::header::decompress_icechunk_file;
 #[cfg(target_arch = "wasm32")]
-use crate::data::backends::wasm_zarr::fetch_url_bytes;
+use crate::data::backends::http::fetch_url_bytes;
 
 /// Resolves the latest snapshot ID and format spec version for an Icechunk repository URL.
 #[cfg(target_arch = "wasm32")]
