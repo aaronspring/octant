@@ -37,6 +37,16 @@ pub struct DggsMetadata {
     pub ellipsoid: Option<DggsEllipsoid>,
 }
 
+#[inline]
+fn find_first_attr<'a>(attributes: &'a HashMap<String, String>, keys: &[&str]) -> Option<&'a str> {
+    for &k in keys {
+        if let Some(v) = attributes.get(k) {
+            return Some(v.as_str());
+        }
+    }
+    None
+}
+
 impl DggsMetadata {
     /// Attempts to parse DGGS metadata from an attributes map.
     pub fn from_attributes(attributes: &HashMap<String, String>) -> Option<Self> {
@@ -47,37 +57,46 @@ impl DggsMetadata {
         }
 
         // Check if individual flattened keys exist
-        if let Some(name) = attributes
-            .get("dggs_name")
-            .or_else(|| attributes.get("dggs:name"))
-            .or_else(|| attributes.get("grid_name"))
-        {
-            let spatial_dimension = attributes
-                .get("dggs_spatial_dimension")
-                .or_else(|| attributes.get("dggs:spatial_dimension"))
-                .or_else(|| attributes.get("spatial_dimension"))
-                .cloned()
-                .unwrap_or_else(|| "cells".to_string());
+        if let Some(name) = find_first_attr(attributes, &["dggs_name", "dggs:name", "grid_name"]) {
+            let spatial_dimension = find_first_attr(
+                attributes,
+                &[
+                    "dggs_spatial_dimension",
+                    "dggs:spatial_dimension",
+                    "spatial_dimension",
+                ],
+            )
+            .unwrap_or("cells")
+            .to_string();
 
-            let refinement_level = attributes
-                .get("dggs_refinement_level")
-                .or_else(|| attributes.get("dggs:refinement_level"))
-                .or_else(|| attributes.get("healpix_zoom"))
-                .or_else(|| attributes.get("healpix_level"))
-                .and_then(|s| s.parse::<u32>().ok());
+            let refinement_level = find_first_attr(
+                attributes,
+                &[
+                    "dggs_refinement_level",
+                    "dggs:refinement_level",
+                    "healpix_zoom",
+                    "healpix_level",
+                ],
+            )
+            .and_then(|s| s.parse::<u32>().ok());
 
-            let indexing_scheme = attributes
-                .get("dggs_indexing_scheme")
-                .or_else(|| attributes.get("dggs:indexing_scheme"))
-                .or_else(|| attributes.get("indexing_scheme"))
-                .or_else(|| attributes.get("healpix_order"))
-                .or_else(|| attributes.get("ordering"))
-                .cloned();
+            let indexing_scheme = find_first_attr(
+                attributes,
+                &[
+                    "dggs_indexing_scheme",
+                    "dggs:indexing_scheme",
+                    "indexing_scheme",
+                    "healpix_order",
+                    "ordering",
+                ],
+            )
+            .map(str::to_string);
 
-            let coordinate = attributes
-                .get("dggs_coordinate")
-                .or_else(|| attributes.get("dggs:coordinate"))
-                .cloned();
+            let coordinate = find_first_attr(
+                attributes,
+                &["dggs_coordinate", "dggs:coordinate", "coordinate"],
+            )
+            .map(str::to_string);
 
             return Some(Self {
                 name: name.to_ascii_lowercase(),
@@ -95,12 +114,8 @@ impl DggsMetadata {
 
     /// Attempts to parse DGGS metadata from a serde_json::Value map.
     pub fn from_json_value(val: &serde_json::Value) -> Option<Self> {
-        if let Some(dggs_obj) = val.get("dggs")
-            && let Ok(meta) = serde_json::from_value::<Self>(dggs_obj.clone())
-        {
-            return Some(meta);
-        }
-        None
+        let dggs_obj = val.get("dggs")?;
+        serde::Deserialize::deserialize(dggs_obj).ok()
     }
 
     /// Checks if this DGGS metadata describes a HEALPix discrete global grid.
@@ -125,7 +140,7 @@ impl DggsMetadata {
         if let Some(ref scheme) = self.indexing_scheme {
             if scheme.eq_ignore_ascii_case("nested")
                 || scheme.eq_ignore_ascii_case("nest")
-                || scheme.ends_with("uniq")
+                || contains_ascii_case_insensitive(scheme, "uniq")
             {
                 return HealpixOrder::Nested;
             }

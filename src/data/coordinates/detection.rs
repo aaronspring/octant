@@ -18,23 +18,24 @@ pub fn is_irregular_series(coords: &[f64]) -> bool {
     let mut min_delta = f64::MAX;
     let mut max_delta = f64::MIN;
     let mut sum_delta = 0.0;
-    let count = coords.len() - 1;
+    let mut valid_count = 0usize;
 
-    for i in 0..count {
-        let delta = (coords[i + 1] - coords[i]).abs();
+    for w in coords.windows(2) {
+        let delta = (w[1] - w[0]).abs();
         if delta < 1e-7 {
             continue; // Skip identical values
         }
         min_delta = min_delta.min(delta);
         max_delta = max_delta.max(delta);
         sum_delta += delta;
+        valid_count += 1;
     }
 
-    if min_delta == f64::MAX || count == 0 {
+    if min_delta == f64::MAX || valid_count == 0 {
         return false;
     }
 
-    let mean_delta = sum_delta / count as f64;
+    let mean_delta = sum_delta / valid_count as f64;
     if mean_delta < 1e-7 {
         return false;
     }
@@ -43,12 +44,13 @@ pub fn is_irregular_series(coords: &[f64]) -> bool {
     delta_variation > 0.0005 // > 0.05% variation is considered irregular (e.g. Gaussian grids, Clenshaw-Curtis)
 }
 
-/// Helper to detect HEALPix ordering scheme with zero heap allocations.
+/// Helper to detect HEALPix ordering scheme with zero heap allocations, reusing already-parsed DGGS metadata if present.
 #[inline]
-pub fn detect_healpix_ordering(
+pub fn detect_healpix_ordering_with_dggs(
     attributes: &std::collections::HashMap<String, String>,
+    dggs: Option<&super::dggs::DggsMetadata>,
 ) -> super::healpix::HealpixOrder {
-    if let Some(dggs) = super::dggs::DggsMetadata::from_attributes(attributes)
+    if let Some(dggs) = dggs
         && dggs.is_healpix()
     {
         return dggs.healpix_ordering();
@@ -72,6 +74,15 @@ pub fn detect_healpix_ordering(
     } else {
         super::healpix::HealpixOrder::Ring
     }
+}
+
+/// Helper to detect HEALPix ordering scheme with zero heap allocations.
+#[inline]
+pub fn detect_healpix_ordering(
+    attributes: &std::collections::HashMap<String, String>,
+) -> super::healpix::HealpixOrder {
+    let dggs = super::dggs::DggsMetadata::from_attributes(attributes);
+    detect_healpix_ordering_with_dggs(attributes, dggs.as_ref())
 }
 
 /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays and OctantBlock metadata.
@@ -121,16 +132,16 @@ pub fn detect_grid_from_block(
     if (is_healpix_x || is_healpix_y || is_healpix_attr)
         && let Some(nside) = nside_opt
     {
-        let ordering = detect_healpix_ordering(&block.attributes);
+        let ordering = detect_healpix_ordering_with_dggs(&block.attributes, dggs_opt.as_ref());
 
-        let coords_lon = block.coordinates.get("lon").map(|l| {
-            let slice: Arc<[f32]> = l.iter().map(|&v| v as f32).collect();
-            slice
-        });
-        let coords_lat = block.coordinates.get("lat").map(|l| {
-            let slice: Arc<[f32]> = l.iter().map(|&v| v as f32).collect();
-            slice
-        });
+        let coords_lon = block
+            .coordinates
+            .get("lon")
+            .map(|l| l.iter().map(|&v| v as f32).collect::<Arc<[f32]>>());
+        let coords_lat = block
+            .coordinates
+            .get("lat")
+            .map(|l| l.iter().map(|&v| v as f32).collect::<Arc<[f32]>>());
 
         log::info!(
             "CoordinateGrid: Detected HEALPix grid from block (nside={nside}, ordering={:?}, npix={npix})",
@@ -146,6 +157,28 @@ pub fn detect_grid_from_block(
     }
 
     detect_grid(x_name, y_name, x_coords, y_coords, width, height)
+}
+
+#[inline]
+fn build_coordinate_slice(
+    coords: &[f64],
+    target_len: usize,
+    min_val: f32,
+    max_val: f32,
+) -> Arc<[f32]> {
+    if coords.len() >= target_len {
+        coords.iter().take(target_len).map(|&v| v as f32).collect()
+    } else {
+        (0..target_len)
+            .map(|i| {
+                if target_len <= 1 {
+                    min_val
+                } else {
+                    min_val + (i as f32 / (target_len - 1) as f32) * (max_val - min_val)
+                }
+            })
+            .collect()
+    }
 }
 
 /// Automatically classifies and constructs a `CoordinateGrid` from dimension coordinate arrays.
@@ -208,33 +241,8 @@ pub fn detect_grid(
     let y_irregular = is_irregular_series(yc);
 
     if x_irregular || y_irregular {
-        let coords_x: Arc<[f32]> = if xc.len() >= width {
-            xc.iter().take(width).map(|&v| v as f32).collect()
-        } else {
-            (0..width)
-                .map(|i| {
-                    if width <= 1 {
-                        x_min
-                    } else {
-                        x_min + (i as f32 / (width - 1) as f32) * (x_max - x_min)
-                    }
-                })
-                .collect()
-        };
-
-        let coords_y: Arc<[f32]> = if yc.len() >= height {
-            yc.iter().take(height).map(|&v| v as f32).collect()
-        } else {
-            (0..height)
-                .map(|i| {
-                    if height <= 1 {
-                        y_min
-                    } else {
-                        y_min + (i as f32 / (height - 1) as f32) * (y_max - y_min)
-                    }
-                })
-                .collect()
-        };
+        let coords_x = build_coordinate_slice(xc, width, x_min, x_max);
+        let coords_y = build_coordinate_slice(yc, height, y_min, y_max);
 
         log::info!(
             "CoordinateGrid: Detected Irregular1D grid (x_irregular={x_irregular}, y_irregular={y_irregular}, w={width}, h={height})"

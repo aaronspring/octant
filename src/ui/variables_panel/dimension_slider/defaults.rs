@@ -43,6 +43,9 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
         } else {
             SpatialRole::X
         };
+        let dim_size = var_info.shape[0] as usize;
+        let max_selectable = dim_size.min(crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS);
+        app.selected_dim_ranges[0] = (0, max_selectable.saturating_sub(1));
         app.dim_config[0].active = true;
         app.dim_config[0].range = app.selected_dim_ranges[0];
         app.spatial_dims.push(0);
@@ -67,6 +70,10 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
 
     if let Some(grid_i) = healpix_dim_idx {
         app.dim_config[grid_i].spatial = SpatialRole::Grid;
+        let grid_size = var_info.shape[grid_i] as usize;
+        let max_selectable = grid_size.min(crate::plots::common::MAX_GPU_STORAGE_BUFFER_ELEMENTS);
+        app.selected_dim_ranges[grid_i] = (0, max_selectable.saturating_sub(1));
+        app.dim_config[grid_i].range = app.selected_dim_ranges[grid_i];
 
         let mut z_assigned = false;
         let mut anim_assigned = false;
