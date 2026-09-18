@@ -37,15 +37,7 @@ pub struct DggsMetadata {
     pub ellipsoid: Option<DggsEllipsoid>,
 }
 
-#[inline]
-fn find_first_attr<'a>(attributes: &'a HashMap<String, String>, keys: &[&str]) -> Option<&'a str> {
-    for &k in keys {
-        if let Some(v) = attributes.get(k) {
-            return Some(v.as_str());
-        }
-    }
-    None
-}
+use crate::utils::metadata::find_first_attr;
 
 impl DggsMetadata {
     /// Attempts to parse DGGS metadata from an attributes map.

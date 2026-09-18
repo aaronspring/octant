@@ -144,10 +144,64 @@ pub fn infer_store_kind_from_target(target: &str) -> Result<crate::app::StoreKin
     Err("Type not supported")
 }
 
+/// An iterator over ancestor directory or group paths in a hierarchical dataset.
+///
+/// Yields progressively shorter parent path slices, concluding with the root group (`""`).
+#[derive(Debug, Clone)]
+pub struct AncestorPaths<'a> {
+    current: Option<&'a str>,
+}
+
+impl<'a> AncestorPaths<'a> {
+    /// Constructs a new `AncestorPaths` iterator from a dataset or node path.
+    #[inline]
+    pub fn new(path: &'a str) -> Self {
+        let clean = path.trim_matches('/');
+        Self {
+            current: if clean.is_empty() { None } else { Some(clean) },
+        }
+    }
+}
+
+impl<'a> Iterator for AncestorPaths<'a> {
+    type Item = &'a str;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let cur = self.current?;
+        if let Some(idx) = cur.rfind('/') {
+            let parent = &cur[..idx];
+            self.current = Some(parent);
+            Some(parent)
+        } else {
+            self.current = None;
+            Some("")
+        }
+    }
+}
+
+/// Helper function to construct a zero-allocation `AncestorPaths` iterator.
+#[inline]
+pub fn ancestor_paths(path: &str) -> AncestorPaths<'_> {
+    AncestorPaths::new(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::StoreKind;
+
+    #[test]
+    fn test_ancestor_paths() {
+        let ancestors: Vec<&str> = ancestor_paths("/atmosphere/model_run_1/temp").collect();
+        assert_eq!(ancestors, vec!["atmosphere/model_run_1", "atmosphere", ""]);
+
+        let ancestors_single: Vec<&str> = ancestor_paths("temperature").collect();
+        assert_eq!(ancestors_single, vec![""]);
+
+        let ancestors_root: Vec<&str> = ancestor_paths("/").collect();
+        assert!(ancestors_root.is_empty());
+    }
 
     #[test]
     fn test_expand_tilde() {

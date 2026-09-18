@@ -116,7 +116,11 @@ pub fn detect_grid_from_block(
             .get("ordering")
             .is_some_and(|g| super::naming::contains_ascii_case_insensitive(g, "nested"));
 
-    let npix = if height == 1 { width } else { width * height };
+    let npix = if height == 1 {
+        width
+    } else {
+        width.saturating_mul(height)
+    };
     let nside_opt = dggs_opt
         .as_ref()
         .and_then(|d| d.healpix_nside(npix))

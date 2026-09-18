@@ -92,7 +92,7 @@ pub fn fetch_block_from_cached_array(
         cb(bytes_read);
     }
 
-    let attributes: HashMap<String, String> = array
+    let mut attributes: HashMap<String, String> = array
         .attributes()
         .iter()
         .map(|(k, v)| (k.clone(), v.to_string()))
@@ -102,6 +102,25 @@ pub fn fetch_block_from_cached_array(
         .variable
         .rfind('/')
         .map(|idx| &request.variable[..idx]);
+
+    // Inherit ancestor group attributes (e.g. DGGS conventions) if not present on array
+    if !attributes.contains_key("dggs") {
+        for ancestor in crate::utils::path::ancestor_paths(&request.variable) {
+            let p = if ancestor.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{ancestor}")
+            };
+            if let Ok(grp) = zarrs::group::Group::open(store.clone(), &p) {
+                for (k, v) in grp.attributes() {
+                    attributes.entry(k.clone()).or_insert_with(|| v.to_string());
+                }
+                if attributes.contains_key("dggs") {
+                    break;
+                }
+            }
+        }
+    }
 
     let full_shape = array.shape();
     let mut coordinates: HashMap<String, Vec<f64>> = HashMap::new();

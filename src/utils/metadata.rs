@@ -242,6 +242,20 @@ pub fn variable_info_from_node_metadata(
     variable_info_from_node_metadata_with_parent_attributes(var_name, node_meta, None)
 }
 
+/// Helper to find the first matching attribute value from a slice of candidate key aliases.
+#[inline]
+pub fn find_first_attr<'a>(
+    attributes: &'a HashMap<String, String>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    for &k in keys {
+        if let Some(v) = attributes.get(k) {
+            return Some(v.as_str());
+        }
+    }
+    None
+}
+
 /// Merges parent group attributes into target attributes map without overriding existing keys.
 #[inline]
 pub fn merge_parent_attributes(
@@ -259,15 +273,10 @@ pub fn resolve_ancestor_attributes(
     var_path: &str,
 ) -> HashMap<String, String> {
     let mut merged = HashMap::new();
-    let mut cur = var_path.trim_matches('/');
-    while let Some(idx) = cur.rfind('/') {
-        cur = &cur[..idx];
-        if let Some(attrs) = group_attrs.get(cur) {
+    for ancestor in crate::utils::path::ancestor_paths(var_path) {
+        if let Some(attrs) = group_attrs.get(ancestor) {
             merge_parent_attributes(&mut merged, attrs);
         }
-    }
-    if let Some(root_attrs) = group_attrs.get("") {
-        merge_parent_attributes(&mut merged, root_attrs);
     }
     merged
 }
@@ -645,15 +654,19 @@ pub fn discover_arrays_via_http_metadata(base_url: &str) -> Vec<VariableInfo> {
                         .unwrap_or_default();
 
                     // Inherit ancestor group attributes (e.g. DGGS conventions)
-                    let mut cur = var_name.as_str();
-                    while let Some(idx) = cur.rfind('/') {
-                        cur = &cur[..idx];
-                        let parent_zattrs = format!("{cur}/.zattrs");
-                        let parent_zarr = format!("{cur}/zarr.json");
-                        if let Some(parent_val) = metadata_obj
-                            .get(&parent_zattrs)
-                            .or_else(|| metadata_obj.get(&parent_zarr))
-                        {
+                    for ancestor in crate::utils::path::ancestor_paths(&var_name) {
+                        let p_val = if ancestor.is_empty() {
+                            metadata_obj
+                                .get(".zattrs")
+                                .or_else(|| metadata_obj.get("zarr.json"))
+                        } else {
+                            let parent_zattrs = format!("{ancestor}/.zattrs");
+                            let parent_zarr = format!("{ancestor}/zarr.json");
+                            metadata_obj
+                                .get(&parent_zattrs)
+                                .or_else(|| metadata_obj.get(&parent_zarr))
+                        };
+                        if let Some(parent_val) = p_val {
                             let p_attrs_obj = parent_val
                                 .get("attributes")
                                 .and_then(|a| a.as_object())
@@ -662,19 +675,6 @@ pub fn discover_arrays_via_http_metadata(base_url: &str) -> Vec<VariableInfo> {
                                 let p_cf = ParsedCfAttributes::from_json_map(p_obj);
                                 merge_parent_attributes(&mut cf_attrs.attributes, &p_cf.attributes);
                             }
-                        }
-                    }
-                    if let Some(root_val) = metadata_obj
-                        .get(".zattrs")
-                        .or_else(|| metadata_obj.get("zarr.json"))
-                    {
-                        let p_attrs_obj = root_val
-                            .get("attributes")
-                            .and_then(|a| a.as_object())
-                            .or_else(|| root_val.as_object());
-                        if let Some(p_obj) = p_attrs_obj {
-                            let p_cf = ParsedCfAttributes::from_json_map(p_obj);
-                            merge_parent_attributes(&mut cf_attrs.attributes, &p_cf.attributes);
                         }
                     }
 
