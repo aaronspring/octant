@@ -281,18 +281,27 @@ impl WasmZarrBlockStore {
             let chunk_rel_key = array.chunk_key(&current);
             let store_key_str = chunk_rel_key.as_str().to_string();
 
-            if !self.has_key(&store_key_str) {
-                let chunk_url = format!("{}/{}", self.base_url, store_key_str);
+            let full_chunk_key = if clean_var.is_empty()
+                || clean_var == "data"
+                || store_key_str.starts_with(clean_var)
+            {
+                store_key_str.clone()
+            } else {
+                format!("{clean_var}/{store_key_str}")
+            };
+
+            if !self.has_key(&full_chunk_key) {
+                let chunk_url = format!("{}/{}", self.base_url, full_chunk_key);
                 log::info!("[WASM Zarr] Fetching chunk: {chunk_url}");
 
                 match fetch_url_bytes(&chunk_url).await {
                     Ok(chunk_bytes) => {
                         let bytes_len = chunk_bytes.len() as u64;
                         log::info!(
-                            "[WASM Zarr] Fetched chunk {store_key_str} ({} bytes)",
+                            "[WASM Zarr] Fetched chunk {full_chunk_key} ({} bytes)",
                             bytes_len
                         );
-                        self.insert_key_bytes(&store_key_str, &chunk_bytes)?;
+                        self.insert_key_bytes(&full_chunk_key, &chunk_bytes)?;
 
                         if let Some(ref mut cb) = on_progress {
                             cb(bytes_len);
@@ -326,18 +335,26 @@ impl WasmZarrBlockStore {
             }
         }
 
-        // Preload associated 1D coordinate arrays (e.g. lat, lon, time) for spatial bounds & axes
+        // Preload associated 1D coordinate arrays (e.g. lat, lon, time, cell_ids) for spatial bounds & axes
         if rank > 1 {
             let dim_names = crate::utils::resolve_array_dimension_names(&array);
+            let group_prefix = clean_var.rfind('/').map(|idx| &clean_var[..idx]);
             for dim in dim_names {
                 let clean = dim.trim().trim_start_matches('/').to_string();
-                let coord_path = format!("/{clean}");
-                if let Ok(coord_array) =
-                    open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
-                    && coord_array.shape().len() == 1
-                {
-                    let count = coord_array.shape().first().copied().unwrap_or(0);
-                    self.preload_boundary_chunks_1d(&clean, count).await;
+                let mut paths = vec![format!("/{clean}")];
+                if let Some(gp) = group_prefix {
+                    paths.push(format!("/{gp}/{clean}"));
+                }
+                for coord_path in paths {
+                    let target_name = coord_path.trim_start_matches('/').to_string();
+                    if let Ok(coord_array) =
+                        open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
+                        && coord_array.shape().len() == 1
+                    {
+                        let count = coord_array.shape().first().copied().unwrap_or(0);
+                        self.preload_boundary_chunks_1d(&target_name, count).await;
+                        break;
+                    }
                 }
             }
         }
@@ -364,14 +381,25 @@ impl WasmZarrBlockStore {
         let coord_candidates =
             crate::data::backends::coord_bounds::collect_coordinate_candidates(variables);
 
-        for coord_name in coord_candidates {
-            let coord_path = format!("/{coord_name}");
-            if let Ok(coord_array) =
-                open_or_instantiate_array_normalized(self.memory_store.clone(), &coord_path)
-                && coord_array.shape().len() == 1
-            {
-                let count = coord_array.shape().first().copied().unwrap_or(0);
-                self.preload_boundary_chunks_1d(&coord_name, count).await;
+        for coord_name in &coord_candidates {
+            let clean = coord_name.trim().trim_start_matches('/').to_string();
+            let mut paths_to_try = vec![format!("/{clean}")];
+            for var in variables {
+                if let Some(gp) = var.group_path() {
+                    paths_to_try.push(format!("/{gp}/{clean}"));
+                }
+            }
+
+            for cp in paths_to_try {
+                let target_name = cp.trim_start_matches('/').to_string();
+                if let Ok(coord_array) =
+                    open_or_instantiate_array_normalized(self.memory_store.clone(), &cp)
+                    && coord_array.shape().len() == 1
+                {
+                    let count = coord_array.shape().first().copied().unwrap_or(0);
+                    self.preload_boundary_chunks_1d(&target_name, count).await;
+                    break;
+                }
             }
         }
     }
@@ -445,6 +473,10 @@ impl BlockStore for WasmZarrBlockStore {
         .into())
     }
 
+    fn fetch_block(&self, request: &SliceRequest) -> Result<OctantBlock, BlockStoreError> {
+        self.fetch_block_with_progress(request, None)
+    }
+
     fn fetch_block_with_progress(
         &self,
         request: &SliceRequest,
@@ -479,6 +511,10 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
             for (k, v) in metadata_map {
                 if let Ok(json_str) = serde_json::to_string(v) {
                     let _ = store.insert_key_bytes(k, json_str.as_bytes());
+                    let clean_k = k.trim_start_matches('/');
+                    if clean_k != k {
+                        let _ = store.insert_key_bytes(clean_k, json_str.as_bytes());
+                    }
                 }
             }
         }
@@ -532,11 +568,34 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
                         format!("{var_name}/.zattrs")
                     };
 
-                    let cf_attrs = metadata_obj
+                    let mut cf_attrs = metadata_obj
                         .get(&attrs_key)
                         .and_then(|a| a.as_object())
                         .map(ParsedCfAttributes::from_json_map)
                         .unwrap_or_default();
+
+                    // Inherit ancestor group attributes (e.g. DGGS conventions)
+                    for ancestor in crate::utils::path::ancestor_paths(&var_name) {
+                        let p_val = if ancestor.is_empty() {
+                            metadata_obj.get(".zattrs")
+                        } else {
+                            let parent_zattrs = format!("{ancestor}/.zattrs");
+                            metadata_obj.get(&parent_zattrs)
+                        };
+                        if let Some(parent_val) = p_val {
+                            let p_attrs_obj = parent_val
+                                .get("attributes")
+                                .and_then(|a| a.as_object())
+                                .or_else(|| parent_val.as_object());
+                            if let Some(p_obj) = p_attrs_obj {
+                                let p_cf = ParsedCfAttributes::from_json_map(p_obj);
+                                crate::utils::metadata::merge_parent_attributes(
+                                    &mut cf_attrs.attributes,
+                                    &p_cf.attributes,
+                                );
+                            }
+                        }
+                    }
 
                     let dimension_names = cf_attrs.resolve_dimension_names(None, shape.len());
                     let file_size = calculate_variable_size_bytes(&shape, &data_type);
@@ -573,6 +632,26 @@ pub async fn inspect_wasm_remote_zarr(url: &str) -> Result<DatasetMetadata, Stri
             let variables = if let Some(ConsolidatedMetadata { metadata, .. }) =
                 group.consolidated_metadata()
             {
+                for (node_path, node_meta) in &metadata {
+                    let clean_path = node_path.trim_matches('/');
+                    if let Ok(json_bytes) = serde_json::to_vec(node_meta) {
+                        if clean_path.is_empty() {
+                            let _ = store.insert_key_bytes("zarr.json", &json_bytes);
+                        } else {
+                            let _ = store
+                                .insert_key_bytes(&format!("{clean_path}/zarr.json"), &json_bytes);
+                            let _ = store.insert_key_bytes(
+                                &format!("meta/root/{clean_path}.array.json"),
+                                &json_bytes,
+                            );
+                            let _ = store.insert_key_bytes(
+                                &format!("meta/root/{clean_path}.group.json"),
+                                &json_bytes,
+                            );
+                        }
+                    }
+                }
+
                 crate::utils::metadata::extract_store_variables_from_consolidated_metadata(
                     &metadata,
                 )

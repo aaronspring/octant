@@ -26,6 +26,7 @@ pub struct DggsMetadata {
     /// Refinement level / depth / order as an unsigned integer, or None for variable-sized cells.
     pub refinement_level: Option<u32>,
     /// Name of the spatial dimension in the dataset array.
+    #[serde(default)]
     pub spatial_dimension: String,
     /// Space-filling curve indexing scheme (for HEALPix: "nested", "ring", "zuniq", etc.).
     pub indexing_scheme: Option<String>,
@@ -42,10 +43,21 @@ use crate::utils::metadata::find_first_attr;
 impl DggsMetadata {
     /// Attempts to parse DGGS metadata from an attributes map.
     pub fn from_attributes(attributes: &HashMap<String, String>) -> Option<Self> {
-        if let Some(dggs_str) = attributes.get("dggs")
-            && let Ok(meta) = serde_json::from_str::<Self>(dggs_str)
-        {
-            return Some(meta);
+        if let Some(dggs_str) = attributes.get("dggs") {
+            if let Ok(meta) = serde_json::from_str::<Self>(dggs_str) {
+                return Some(meta);
+            }
+            if dggs_str.eq_ignore_ascii_case("healpix") {
+                return Some(Self {
+                    name: "healpix".to_string(),
+                    refinement_level: None,
+                    spatial_dimension: String::new(),
+                    indexing_scheme: None,
+                    coordinate: None,
+                    compression: None,
+                    ellipsoid: None,
+                });
+            }
         }
 
         // Check if individual flattened keys exist
@@ -120,7 +132,10 @@ impl DggsMetadata {
     /// Checks if this DGGS metadata matches a given dimension name as a HEALPix spatial dimension.
     #[inline]
     pub fn matches_dim(&self, dim_name: &str) -> bool {
-        self.is_healpix() && self.spatial_dimension.eq_ignore_ascii_case(dim_name)
+        self.is_healpix()
+            && (self.spatial_dimension.is_empty()
+                || self.spatial_dimension.eq_ignore_ascii_case(dim_name)
+                || super::naming::is_healpix_dim_name(dim_name))
     }
 
     /// Resolves the HEALPix `nside` parameter from refinement level ($2^k$) or total pixel count.
