@@ -275,7 +275,8 @@ impl WasmZarrBlockStore {
             chunk_ranges.push(c_start..c_end);
         }
 
-        // Iterate over Cartesian product of chunk indices
+        // 1. Collect all missing chunk keys that need to be fetched
+        let mut missing_chunks: Vec<(String, String)> = Vec::new();
         let mut current = chunk_ranges.iter().map(|r| r.start).collect::<Vec<u64>>();
         loop {
             let chunk_rel_key = array.chunk_key(&current);
@@ -285,39 +286,14 @@ impl WasmZarrBlockStore {
                 || clean_var == "data"
                 || store_key_str.starts_with(clean_var)
             {
-                store_key_str.clone()
+                store_key_str
             } else {
                 format!("{clean_var}/{store_key_str}")
             };
 
             if !self.has_key(&full_chunk_key) {
                 let chunk_url = format!("{}/{}", self.base_url, full_chunk_key);
-                log::info!("[WASM Zarr] Fetching chunk: {chunk_url}");
-
-                match fetch_url_bytes(&chunk_url).await {
-                    Ok(chunk_bytes) => {
-                        let bytes_len = chunk_bytes.len() as u64;
-                        log::info!(
-                            "[WASM Zarr] Fetched chunk {full_chunk_key} ({} bytes)",
-                            bytes_len
-                        );
-                        self.insert_key_bytes(&full_chunk_key, &chunk_bytes)?;
-
-                        if let Some(ref mut cb) = on_progress {
-                            cb(bytes_len);
-                        }
-                    }
-                    Err(err) if err.contains("HTTP 404") => {
-                        log::warn!(
-                            "[WASM Zarr] Chunk not found (HTTP 404 / sparse chunk): {chunk_url}"
-                        );
-                        // In Zarr specification, missing chunks are treated as fill value.
-                    }
-                    Err(err) => {
-                        log::error!("[WASM Zarr] Failed to fetch chunk '{chunk_url}': {err}");
-                        return Err(format!("Failed to fetch chunk '{chunk_url}': {err}").into());
-                    }
-                }
+                missing_chunks.push((full_chunk_key, chunk_url));
             }
 
             // Advance chunk indices
@@ -332,6 +308,44 @@ impl WasmZarrBlockStore {
             }
             if carry {
                 break;
+            }
+        }
+
+        // 2. Concurrently download chunks in parallel batches
+        if !missing_chunks.is_empty() {
+            log::info!(
+                "[WASM Zarr] Preloading {} chunk(s) concurrently for '{}'",
+                missing_chunks.len(),
+                clean_var
+            );
+            const CONCURRENT_BATCH_SIZE: usize = 32;
+            for batch in missing_chunks.chunks(CONCURRENT_BATCH_SIZE) {
+                let futures_batch: Vec<_> = batch
+                    .iter()
+                    .map(|(key, url)| async move { (key, url, fetch_url_bytes(url).await) })
+                    .collect();
+
+                let results = futures::future::join_all(futures_batch).await;
+                for (key, url, res) in results {
+                    match res {
+                        Ok(chunk_bytes) => {
+                            let bytes_len = chunk_bytes.len() as u64;
+                            self.insert_key_bytes(key, &chunk_bytes)?;
+                            if let Some(ref mut cb) = on_progress {
+                                cb(bytes_len);
+                            }
+                        }
+                        Err(err) if err.contains("HTTP 404") => {
+                            log::warn!(
+                                "[WASM Zarr] Chunk not found (HTTP 404 / sparse chunk): {url}"
+                            );
+                        }
+                        Err(err) => {
+                            log::error!("[WASM Zarr] Failed to fetch chunk '{url}': {err}");
+                            return Err(format!("Failed to fetch chunk '{url}': {err}").into());
+                        }
+                    }
+                }
             }
         }
 
