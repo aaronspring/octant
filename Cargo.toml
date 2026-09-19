@@ -43,6 +43,8 @@ zarrs_codec = "0.2"
 zarrs_plugin = "0.4"
 bytes = "1.12"
 async-trait = "0.1"
+half = "2.4"
+weezl = "0.2"
 
 icechunk-format = { version = "2.1.2", default-features = false }
 icechunk-types = { version = "2.1.2", default-features = false }
