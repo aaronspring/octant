@@ -1,5 +1,6 @@
 //! GeoTIFF and TIFF storage backend for `BlockStore`.
 
+pub mod blit;
 pub mod coords;
 pub mod decompress;
 pub mod inspect;
@@ -14,6 +15,7 @@ pub mod store;
 pub mod tests;
 pub mod unpack;
 
+pub use blit::{BlitSource, ReadWindow};
 pub use coords::GeoSpatialBounds;
 pub use inspect::inspect_tiff;
 pub use reader::{MemoryTiffReader, create_async_reader};

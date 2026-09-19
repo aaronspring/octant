@@ -90,7 +90,7 @@ impl GeoTiffBlockStore {
 
         let tiff = TIFF::new(ifds, metadata_reader.endianness());
         let metadata = inspect_tiff(&tiff, name);
-        let decoder_registry = Arc::new(DecoderRegistry::default());
+        let decoder_registry = Arc::new(super::decompress::create_robust_decoder_registry());
 
         Ok(Self {
             uri: name.to_string(),

@@ -1,122 +1,230 @@
-//! Self-contained decompression routines for TIFF data buffers.
+//! Self-contained decompression routines integrated with `async-tiff`'s DecoderRegistry.
 
-use async_tiff::tags::Compression;
 use std::io::Read;
 
-/// Decompress raw compressed tile/strip bytes based on the TIFF compression method.
+use async_tiff::decoder::{Decoder, DecoderRegistry};
+use async_tiff::error::{AsyncTiffError, AsyncTiffResult};
+use async_tiff::tags::{Compression, PhotometricInterpretation};
+use bytes::Bytes;
+
+/// Construct a `DecoderRegistry` populated with non-panicking, robust decoders.
+pub fn create_robust_decoder_registry() -> DecoderRegistry {
+    let mut registry = DecoderRegistry::empty();
+    let map = registry.as_mut();
+    map.insert(Compression::None, Box::new(UncompressedDecoder));
+    map.insert(Compression::PackBits, Box::new(PackBitsDecoder));
+    map.insert(Compression::LZW, Box::new(RobustLzwDecoder));
+    map.insert(Compression::Deflate, Box::new(DeflateDecoder));
+    map.insert(Compression::OldDeflate, Box::new(DeflateDecoder));
+    map.insert(Compression::ZSTD, Box::new(ZstdDecoder));
+    map.insert(Compression::ModernJPEG, Box::new(JpegDecoder));
+    map.insert(Compression::JPEG, Box::new(JpegDecoder));
+    registry
+}
+
+/// Decompress raw compressed tile/strip bytes using the provided `DecoderRegistry`.
 pub fn decompress_chunk(
     compressed: &[u8],
     compression: Compression,
+    photometric: PhotometricInterpretation,
     jpeg_tables: Option<&[u8]>,
+    samples: u16,
+    bits: u16,
+    registry: &DecoderRegistry,
 ) -> Result<Vec<u8>, String> {
-    match compression {
-        Compression::None => Ok(compressed.to_vec()),
-        Compression::PackBits => decompress_packbits(compressed),
-        Compression::LZW => decompress_lzw(compressed),
-        Compression::Deflate | Compression::OldDeflate => decompress_deflate(compressed),
-        Compression::ZSTD => decompress_zstd(compressed),
-        Compression::ModernJPEG | Compression::JPEG => decompress_jpeg(compressed, jpeg_tables),
-        other => Err(format!("Unsupported TIFF compression: {other:?}")),
+    if let Some(decoder) = registry.as_ref().get(&compression) {
+        let bytes = Bytes::copy_from_slice(compressed);
+        decoder
+            .decode_tile(bytes, photometric, jpeg_tables, samples, bits, None)
+            .map_err(|e| e.to_string())
+    } else {
+        Err(format!("Unsupported TIFF compression: {compression:?}"))
+    }
+}
+
+/// Passthrough uncompressed decoder.
+#[derive(Debug, Clone)]
+pub struct UncompressedDecoder;
+
+impl Decoder for UncompressedDecoder {
+    fn decode_tile(
+        &self,
+        buffer: Bytes,
+        _photo: PhotometricInterpretation,
+        _tables: Option<&[u8]>,
+        _samples: u16,
+        _bits: u16,
+        _lerc: Option<&[u32]>,
+    ) -> AsyncTiffResult<Vec<u8>> {
+        Ok(buffer.to_vec())
     }
 }
 
 /// Apple/TIFF PackBits byte-run RLE decompressor.
-pub fn decompress_packbits(input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(input.len() * 2);
-    let mut i = 0;
-    while i < input.len() {
-        let n = input[i] as i8;
-        i += 1;
-        if n >= 0 {
-            let count = n as usize + 1;
-            if i + count > input.len() {
-                return Err("PackBits literal run exceeds input bounds".to_string());
-            }
-            out.extend_from_slice(&input[i..i + count]);
-            i += count;
-        } else if n != -128 {
-            let count = (-n) as usize + 1;
-            if i >= input.len() {
-                return Err("PackBits repeated byte missing in input".to_string());
-            }
-            let byte = input[i];
+#[derive(Debug, Clone)]
+pub struct PackBitsDecoder;
+
+impl Decoder for PackBitsDecoder {
+    fn decode_tile(
+        &self,
+        buffer: Bytes,
+        _photo: PhotometricInterpretation,
+        _tables: Option<&[u8]>,
+        _samples: u16,
+        _bits: u16,
+        _lerc: Option<&[u32]>,
+    ) -> AsyncTiffResult<Vec<u8>> {
+        let input = buffer.as_ref();
+        let mut out = Vec::with_capacity(input.len() * 2);
+        let mut i = 0;
+        while i < input.len() {
+            let n = input[i] as i8;
             i += 1;
-            out.resize(out.len() + count, byte);
+            if n >= 0 {
+                let count = n as usize + 1;
+                if i + count > input.len() {
+                    return Err(AsyncTiffError::General("PackBits run exceeds input".into()));
+                }
+                out.extend_from_slice(&input[i..i + count]);
+                i += count;
+            } else if n != -128 {
+                let count = (-n) as usize + 1;
+                if i >= input.len() {
+                    return Err(AsyncTiffError::General("PackBits byte missing".into()));
+                }
+                let byte = input[i];
+                i += 1;
+                out.resize(out.len() + count, byte);
+            }
         }
+        Ok(out)
     }
-    Ok(out)
 }
 
 /// LZW decompressor using weezl with TIFF MSB/LSB bit ordering and compat fallbacks.
-pub fn decompress_lzw(input: &[u8]) -> Result<Vec<u8>, String> {
-    // 1. Standard TIFF LZW (MSB with TIFF size switch)
-    let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
-    if let Ok(data) = decoder.decode(input) {
-        return Ok(data);
+#[derive(Debug, Clone)]
+pub struct RobustLzwDecoder;
+
+impl Decoder for RobustLzwDecoder {
+    fn decode_tile(
+        &self,
+        buffer: Bytes,
+        _photo: PhotometricInterpretation,
+        _tables: Option<&[u8]>,
+        _samples: u16,
+        _bits: u16,
+        _lerc: Option<&[u32]>,
+    ) -> AsyncTiffResult<Vec<u8>> {
+        let input = buffer.as_ref();
+        // 1. Standard TIFF LZW (MSB with TIFF size switch)
+        let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
+        if let Ok(data) = decoder.decode(input) {
+            return Ok(data);
+        }
+        // 2. Standard LZW (MSB standard switch)
+        let mut compat = weezl::decode::Decoder::new(weezl::BitOrder::Msb, 8);
+        if let Ok(data) = compat.decode(input) {
+            return Ok(data);
+        }
+        // 3. LSB LZW (FillOrder=2 / compat mode with TIFF switch)
+        let mut lsb = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Lsb, 8);
+        if let Ok(data) = lsb.decode(input) {
+            return Ok(data);
+        }
+        // 4. LSB LZW (FillOrder=2 / compat mode with standard switch)
+        let mut lsb_std = weezl::decode::Decoder::new(weezl::BitOrder::Lsb, 8);
+        lsb_std
+            .decode(input)
+            .map_err(|e| AsyncTiffError::General(format!("LZW decompression failed: {e:?}")))
     }
-    // 2. Standard LZW (MSB standard switch)
-    let mut compat_decoder = weezl::decode::Decoder::new(weezl::BitOrder::Msb, 8);
-    if let Ok(data) = compat_decoder.decode(input) {
-        return Ok(data);
-    }
-    // 3. LSB LZW (FillOrder=2 / compat mode with TIFF switch)
-    let mut lsb_decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Lsb, 8);
-    if let Ok(data) = lsb_decoder.decode(input) {
-        return Ok(data);
-    }
-    // 4. LSB LZW (FillOrder=2 / compat mode with standard switch)
-    let mut lsb_std_decoder = weezl::decode::Decoder::new(weezl::BitOrder::Lsb, 8);
-    lsb_std_decoder
-        .decode(input)
-        .map_err(|e| format!("LZW decompression failed: {e:?}"))
 }
 
 /// Deflate / Zlib decompressor.
-pub fn decompress_deflate(input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut decoder = flate2::read::ZlibDecoder::new(input);
-    let mut out = Vec::new();
-    decoder
-        .read_to_end(&mut out)
-        .map_err(|e| format!("Deflate decompression failed: {e}"))?;
-    Ok(out)
+#[derive(Debug, Clone)]
+pub struct DeflateDecoder;
+
+impl Decoder for DeflateDecoder {
+    fn decode_tile(
+        &self,
+        buffer: Bytes,
+        _photo: PhotometricInterpretation,
+        _tables: Option<&[u8]>,
+        _samples: u16,
+        _bits: u16,
+        _lerc: Option<&[u32]>,
+    ) -> AsyncTiffResult<Vec<u8>> {
+        let mut decoder = flate2::read::ZlibDecoder::new(buffer.as_ref());
+        let mut out = Vec::new();
+        decoder
+            .read_to_end(&mut out)
+            .map_err(|e| AsyncTiffError::General(format!("Deflate failed: {e}")))?;
+        Ok(out)
+    }
 }
 
 /// Zstd decompressor using ruzstd.
-pub fn decompress_zstd(input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut decoder = ruzstd::decoding::StreamingDecoder::new(input)
-        .map_err(|e| format!("Zstd decoder init failed: {e:?}"))?;
-    let mut out = Vec::new();
-    decoder
-        .read_to_end(&mut out)
-        .map_err(|e| format!("Zstd decompression failed: {e:?}"))?;
-    Ok(out)
+#[derive(Debug, Clone)]
+pub struct ZstdDecoder;
+
+impl Decoder for ZstdDecoder {
+    fn decode_tile(
+        &self,
+        buffer: Bytes,
+        _photo: PhotometricInterpretation,
+        _tables: Option<&[u8]>,
+        _samples: u16,
+        _bits: u16,
+        _lerc: Option<&[u32]>,
+    ) -> AsyncTiffResult<Vec<u8>> {
+        let mut decoder = ruzstd::decoding::StreamingDecoder::new(buffer.as_ref())
+            .map_err(|e| AsyncTiffError::General(format!("Zstd init failed: {e:?}")))?;
+        let mut out = Vec::new();
+        decoder
+            .read_to_end(&mut out)
+            .map_err(|e| AsyncTiffError::General(format!("Zstd decompression failed: {e:?}")))?;
+        Ok(out)
+    }
 }
 
 /// JPEG decompressor combining JPEGTables with tile/strip payload.
-pub fn decompress_jpeg(input: &[u8], jpeg_tables: Option<&[u8]>) -> Result<Vec<u8>, String> {
-    let combined_data = if let Some(tables) = jpeg_tables
-        && tables.len() >= 4
-        && input.len() >= 2
-    {
-        let mut combined = Vec::with_capacity(tables.len() + input.len());
-        let tables_payload = if tables.ends_with(&[0xFF, 0xD9]) {
-            &tables[..tables.len() - 2]
-        } else {
-            tables
-        };
-        let input_payload = if input.starts_with(&[0xFF, 0xD8]) {
-            &input[2..]
-        } else {
-            input
-        };
-        combined.extend_from_slice(tables_payload);
-        combined.extend_from_slice(input_payload);
-        combined
-    } else {
-        input.to_vec()
-    };
+#[derive(Debug, Clone)]
+pub struct JpegDecoder;
 
-    let img = image::load_from_memory_with_format(&combined_data, image::ImageFormat::Jpeg)
-        .map_err(|e| format!("JPEG decompression failed: {e}"))?;
-    Ok(img.to_rgb8().into_raw())
+impl Decoder for JpegDecoder {
+    fn decode_tile(
+        &self,
+        buffer: Bytes,
+        _photo: PhotometricInterpretation,
+        jpeg_tables: Option<&[u8]>,
+        _samples: u16,
+        _bits: u16,
+        _lerc: Option<&[u32]>,
+    ) -> AsyncTiffResult<Vec<u8>> {
+        let input = buffer.as_ref();
+        let combined_data = if let Some(tables) = jpeg_tables
+            && tables.len() >= 4
+            && input.len() >= 2
+        {
+            let mut combined = Vec::with_capacity(tables.len() + input.len());
+            let tables_payload = if tables.ends_with(&[0xFF, 0xD9]) {
+                &tables[..tables.len() - 2]
+            } else {
+                tables
+            };
+            let input_payload = if input.starts_with(&[0xFF, 0xD8]) {
+                &input[2..]
+            } else {
+                input
+            };
+            combined.extend_from_slice(tables_payload);
+            combined.extend_from_slice(input_payload);
+            combined
+        } else {
+            input.to_vec()
+        };
+
+        let img = image::load_from_memory_with_format(&combined_data, image::ImageFormat::Jpeg)
+            .map_err(|e| AsyncTiffError::General(format!("JPEG decode failed: {e}")))?;
+        Ok(img.to_rgb8().into_raw())
+    }
 }

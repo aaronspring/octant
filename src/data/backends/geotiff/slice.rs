@@ -12,6 +12,7 @@ use crate::data::blocks::BlockStoreError;
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::SliceRequest;
 
+use super::blit::ReadWindow;
 use super::coords::GeoSpatialBounds;
 use super::palette::apply_colormap;
 use super::slice_striped::read_striped_region;
@@ -22,7 +23,7 @@ pub async fn fetch_geotiff_block(
     ifd: &ImageFileDirectory,
     request: &SliceRequest,
     reader: &dyn AsyncFileReader,
-    _decoder_registry: &DecoderRegistry,
+    decoder_registry: &DecoderRegistry,
 ) -> Result<OctantBlock, BlockStoreError> {
     let (band_opt, row_range, col_range) = parse_slice_request(request, ifd);
     let (row_start, row_end) = row_range;
@@ -39,14 +40,21 @@ pub async fn fetch_geotiff_block(
         // Single 2D band extraction
         let mut buffer = vec![f32::NAN; out_height * out_width];
         let window = ReadWindow {
-            band: band_idx,
             row_start,
             row_end,
             col_start,
             col_end,
             nodata_val,
         };
-        read_band_region(ifd, reader, &window, &mut buffer).await?;
+        read_region(
+            ifd,
+            reader,
+            decoder_registry,
+            &window,
+            &[band_idx],
+            &mut [&mut buffer],
+        )
+        .await?;
 
         if is_palette
             && let Some(cmap) = colormap
@@ -78,25 +86,51 @@ pub async fn fetch_geotiff_block(
             ifd.samples_per_pixel() as usize
         };
         let mut buffer = vec![f32::NAN; total_bands * out_height * out_width];
+        let plane_len = out_height * out_width;
 
-        for b in 0..total_bands {
-            let slice_start = b * out_height * out_width;
-            let slice_end = slice_start + out_height * out_width;
-            let window = ReadWindow {
-                band: if is_palette { 0 } else { b },
-                row_start,
-                row_end,
-                col_start,
-                col_end,
-                nodata_val,
-            };
-            read_band_region(ifd, reader, &window, &mut buffer[slice_start..slice_end]).await?;
+        let window = ReadWindow {
+            row_start,
+            row_end,
+            col_start,
+            col_end,
+            nodata_val,
+        };
 
-            if is_palette && let Some(cmap) = colormap {
+        if is_palette && colormap.is_some() {
+            // Read palette indices into band 0, then map across all channels
+            let mut idx_buf = vec![f32::NAN; plane_len];
+            read_region(
+                ifd,
+                reader,
+                decoder_registry,
+                &window,
+                &[0],
+                &mut [&mut idx_buf],
+            )
+            .await?;
+
+            if let Some(cmap) = colormap {
                 let bits = ifd.bits_per_sample().first().copied().unwrap_or(8);
-                let mapped = apply_colormap(&buffer[slice_start..slice_end], cmap, bits, b);
-                buffer[slice_start..slice_end].copy_from_slice(&mapped);
+                for b in 0..3 {
+                    let slice_start = b * plane_len;
+                    let slice_end = slice_start + plane_len;
+                    let mapped = apply_colormap(&idx_buf, cmap, bits, b);
+                    buffer[slice_start..slice_end].copy_from_slice(&mapped);
+                }
             }
+        } else {
+            // Single-pass multi-band extraction for chunky or planar datasets
+            let target_bands: Vec<usize> = (0..total_bands).collect();
+            let mut slices: Vec<&mut [f32]> = buffer.chunks_exact_mut(plane_len).collect();
+            read_region(
+                ifd,
+                reader,
+                decoder_registry,
+                &window,
+                &target_bands,
+                &mut slices,
+            )
+            .await?;
         }
 
         (
@@ -138,6 +172,21 @@ pub async fn fetch_geotiff_block(
         coords,
         attributes,
     ))
+}
+
+async fn read_region(
+    ifd: &ImageFileDirectory,
+    reader: &dyn AsyncFileReader,
+    decoder_registry: &DecoderRegistry,
+    win: &ReadWindow,
+    target_bands: &[usize],
+    out_slices: &mut [&mut [f32]],
+) -> Result<(), BlockStoreError> {
+    if ifd.tile_width().is_some() {
+        read_tiled_region(ifd, reader, decoder_registry, win, target_bands, out_slices).await
+    } else {
+        read_striped_region(ifd, reader, decoder_registry, win, target_bands, out_slices).await
+    }
 }
 
 fn parse_slice_request(
@@ -194,43 +243,4 @@ fn parse_slice_request(
     let col_end = col_sel.1.max(col_start + 1).min(img_w);
 
     (band_idx, (row_start, row_end), (col_start, col_end))
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ReadWindow {
-    pub band: usize,
-    pub row_start: usize,
-    pub row_end: usize,
-    pub col_start: usize,
-    pub col_end: usize,
-    pub nodata_val: Option<f64>,
-}
-
-async fn read_band_region(
-    ifd: &ImageFileDirectory,
-    reader: &dyn AsyncFileReader,
-    win: &ReadWindow,
-    out: &mut [f32],
-) -> Result<(), BlockStoreError> {
-    if ifd.tile_width().is_some() {
-        read_tiled_region(ifd, reader, win, out).await
-    } else {
-        read_striped_region(ifd, reader, win, out).await
-    }
-}
-
-pub fn is_nodata(val: f32, nodata: Option<f64>) -> bool {
-    if val.is_nan() {
-        return true;
-    }
-    if let Some(nd) = nodata {
-        let nd_f32 = nd as f32;
-        if nd_f32.is_nan() {
-            val.is_nan()
-        } else {
-            (val - nd_f32).abs() < 1e-6
-        }
-    } else {
-        false
-    }
 }
