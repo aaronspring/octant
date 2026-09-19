@@ -46,10 +46,12 @@ pub fn blit_chunk_to_window(
     }
 
     let nodata = win.nodata_val;
+    let rows = r_min..r_max;
+    let cols = c_min..c_max;
 
     match (sample_fmt, bits_per_sample) {
         (SampleFormat::Uint, 8) => {
-            blit_u8(
+            blit_typed(
                 raw,
                 chunk_w,
                 chunk_h,
@@ -57,18 +59,44 @@ pub fn blit_chunk_to_window(
                 is_planar,
                 origin_x,
                 origin_y,
-                is_white_zero,
                 win,
                 out_w,
-                r_min..r_max,
-                c_min..c_max,
+                rows,
+                cols,
                 target_bands,
                 out_slices,
                 nodata,
+                |raw, idx, _, _, _| {
+                    let b = raw.get(idx).copied().unwrap_or(0);
+                    if is_white_zero {
+                        (255 - b) as f32
+                    } else {
+                        b as f32
+                    }
+                },
+            );
+        }
+        (SampleFormat::Int, 8) => {
+            blit_typed(
+                raw,
+                chunk_w,
+                chunk_h,
+                samples_per_pixel,
+                is_planar,
+                origin_x,
+                origin_y,
+                win,
+                out_w,
+                rows,
+                cols,
+                target_bands,
+                out_slices,
+                nodata,
+                |raw, idx, _, _, _| raw.get(idx).map(|&b| b as i8 as f32).unwrap_or(f32::NAN),
             );
         }
         (SampleFormat::Uint, 16) => {
-            blit_u16(
+            blit_typed(
                 raw,
                 chunk_w,
                 chunk_h,
@@ -78,328 +106,93 @@ pub fn blit_chunk_to_window(
                 origin_y,
                 win,
                 out_w,
-                r_min..r_max,
-                c_min..c_max,
+                rows,
+                cols,
                 target_bands,
                 out_slices,
                 nodata,
-            );
-        }
-        (SampleFormat::Int, 16) => {
-            blit_i16(
-                raw,
-                chunk_w,
-                chunk_h,
-                samples_per_pixel,
-                is_planar,
-                origin_x,
-                origin_y,
-                win,
-                out_w,
-                r_min..r_max,
-                c_min..c_max,
-                target_bands,
-                out_slices,
-                nodata,
-            );
-        }
-        (SampleFormat::Float, 32) => {
-            blit_f32(
-                raw,
-                chunk_w,
-                chunk_h,
-                samples_per_pixel,
-                is_planar,
-                origin_x,
-                origin_y,
-                win,
-                out_w,
-                r_min..r_max,
-                c_min..c_max,
-                target_bands,
-                out_slices,
-                nodata,
-            );
-        }
-        (SampleFormat::Float, 64) => {
-            blit_f64(
-                raw,
-                chunk_w,
-                chunk_h,
-                samples_per_pixel,
-                is_planar,
-                origin_x,
-                origin_y,
-                win,
-                out_w,
-                r_min..r_max,
-                c_min..c_max,
-                target_bands,
-                out_slices,
-                nodata,
-            );
-        }
-        _ => {
-            blit_generic(
-                raw,
-                chunk_w,
-                chunk_h,
-                samples_per_pixel,
-                is_planar,
-                origin_x,
-                origin_y,
-                sample_fmt,
-                bits_per_sample,
-                is_white_zero,
-                win,
-                out_w,
-                r_min..r_max,
-                c_min..c_max,
-                target_bands,
-                out_slices,
-                nodata,
-            );
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn blit_u8(
-    raw: &[u8],
-    w: usize,
-    h: usize,
-    samples: usize,
-    is_planar: bool,
-    orig_x: usize,
-    orig_y: usize,
-    is_white_zero: bool,
-    win: &ReadWindow,
-    out_w: usize,
-    rows: std::ops::Range<usize>,
-    cols: std::ops::Range<usize>,
-    target_bands: &[usize],
-    out_slices: &mut [&mut [f32]],
-    nodata: Option<f64>,
-) {
-    let plane_size = w * h;
-    for r in rows {
-        let local_r = r - orig_y;
-        let dst_r = r - win.row_start;
-        for c in cols.clone() {
-            let local_c = c - orig_x;
-            let dst_c = c - win.col_start;
-            let dst_idx = dst_r * out_w + dst_c;
-
-            for (i, &band) in target_bands.iter().enumerate() {
-                if let Some(out_slice) = out_slices.get_mut(i) {
-                    let linear_idx = if is_planar {
-                        band * plane_size + local_r * w + local_c
-                    } else {
-                        local_r * (w * samples) + local_c * samples + band
-                    };
-                    let byte = raw.get(linear_idx).copied().unwrap_or(0);
-                    let val = if is_white_zero {
-                        (255 - byte) as f32
-                    } else {
-                        byte as f32
-                    };
-                    out_slice[dst_idx] = if is_nodata(val, nodata) {
-                        f32::NAN
-                    } else {
-                        val
-                    };
-                }
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn blit_u16(
-    raw: &[u8],
-    w: usize,
-    h: usize,
-    samples: usize,
-    is_planar: bool,
-    orig_x: usize,
-    orig_y: usize,
-    win: &ReadWindow,
-    out_w: usize,
-    rows: std::ops::Range<usize>,
-    cols: std::ops::Range<usize>,
-    target_bands: &[usize],
-    out_slices: &mut [&mut [f32]],
-    nodata: Option<f64>,
-) {
-    let plane_size = w * h;
-    for r in rows {
-        let local_r = r - orig_y;
-        let dst_r = r - win.row_start;
-        for c in cols.clone() {
-            let local_c = c - orig_x;
-            let dst_c = c - win.col_start;
-            let dst_idx = dst_r * out_w + dst_c;
-
-            for (i, &band) in target_bands.iter().enumerate() {
-                if let Some(out_slice) = out_slices.get_mut(i) {
-                    let linear_idx = if is_planar {
-                        band * plane_size + local_r * w + local_c
-                    } else {
-                        local_r * (w * samples) + local_c * samples + band
-                    };
-                    let off = linear_idx * 2;
-                    let val = if off + 1 < raw.len() {
+                |raw, idx, _, _, _| {
+                    let off = idx * 2;
+                    if off + 1 < raw.len() {
                         u16::from_ne_bytes([raw[off], raw[off + 1]]) as f32
                     } else {
                         f32::NAN
-                    };
-                    out_slice[dst_idx] = if is_nodata(val, nodata) {
-                        f32::NAN
-                    } else {
-                        val
-                    };
-                }
-            }
+                    }
+                },
+            );
         }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn blit_i16(
-    raw: &[u8],
-    w: usize,
-    h: usize,
-    samples: usize,
-    is_planar: bool,
-    orig_x: usize,
-    orig_y: usize,
-    win: &ReadWindow,
-    out_w: usize,
-    rows: std::ops::Range<usize>,
-    cols: std::ops::Range<usize>,
-    target_bands: &[usize],
-    out_slices: &mut [&mut [f32]],
-    nodata: Option<f64>,
-) {
-    let plane_size = w * h;
-    for r in rows {
-        let local_r = r - orig_y;
-        let dst_r = r - win.row_start;
-        for c in cols.clone() {
-            let local_c = c - orig_x;
-            let dst_c = c - win.col_start;
-            let dst_idx = dst_r * out_w + dst_c;
-
-            for (i, &band) in target_bands.iter().enumerate() {
-                if let Some(out_slice) = out_slices.get_mut(i) {
-                    let linear_idx = if is_planar {
-                        band * plane_size + local_r * w + local_c
-                    } else {
-                        local_r * (w * samples) + local_c * samples + band
-                    };
-                    let off = linear_idx * 2;
-                    let val = if off + 1 < raw.len() {
+        (SampleFormat::Int, 16) => {
+            blit_typed(
+                raw,
+                chunk_w,
+                chunk_h,
+                samples_per_pixel,
+                is_planar,
+                origin_x,
+                origin_y,
+                win,
+                out_w,
+                rows,
+                cols,
+                target_bands,
+                out_slices,
+                nodata,
+                |raw, idx, _, _, _| {
+                    let off = idx * 2;
+                    if off + 1 < raw.len() {
                         i16::from_ne_bytes([raw[off], raw[off + 1]]) as f32
                     } else {
                         f32::NAN
-                    };
-                    out_slice[dst_idx] = if is_nodata(val, nodata) {
-                        f32::NAN
-                    } else {
-                        val
-                    };
-                }
-            }
+                    }
+                },
+            );
         }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn blit_f32(
-    raw: &[u8],
-    w: usize,
-    h: usize,
-    samples: usize,
-    is_planar: bool,
-    orig_x: usize,
-    orig_y: usize,
-    win: &ReadWindow,
-    out_w: usize,
-    rows: std::ops::Range<usize>,
-    cols: std::ops::Range<usize>,
-    target_bands: &[usize],
-    out_slices: &mut [&mut [f32]],
-    nodata: Option<f64>,
-) {
-    let plane_size = w * h;
-    for r in rows {
-        let local_r = r - orig_y;
-        let dst_r = r - win.row_start;
-        for c in cols.clone() {
-            let local_c = c - orig_x;
-            let dst_c = c - win.col_start;
-            let dst_idx = dst_r * out_w + dst_c;
-
-            for (i, &band) in target_bands.iter().enumerate() {
-                if let Some(out_slice) = out_slices.get_mut(i) {
-                    let linear_idx = if is_planar {
-                        band * plane_size + local_r * w + local_c
-                    } else {
-                        local_r * (w * samples) + local_c * samples + band
-                    };
-                    let off = linear_idx * 4;
-                    let val = if off + 3 < raw.len() {
+        (SampleFormat::Float, 32) => {
+            blit_typed(
+                raw,
+                chunk_w,
+                chunk_h,
+                samples_per_pixel,
+                is_planar,
+                origin_x,
+                origin_y,
+                win,
+                out_w,
+                rows,
+                cols,
+                target_bands,
+                out_slices,
+                nodata,
+                |raw, idx, _, _, _| {
+                    let off = idx * 4;
+                    if off + 3 < raw.len() {
                         f32::from_ne_bytes([raw[off], raw[off + 1], raw[off + 2], raw[off + 3]])
                     } else {
                         f32::NAN
-                    };
-                    out_slice[dst_idx] = if is_nodata(val, nodata) {
-                        f32::NAN
-                    } else {
-                        val
-                    };
-                }
-            }
+                    }
+                },
+            );
         }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn blit_f64(
-    raw: &[u8],
-    w: usize,
-    h: usize,
-    samples: usize,
-    is_planar: bool,
-    orig_x: usize,
-    orig_y: usize,
-    win: &ReadWindow,
-    out_w: usize,
-    rows: std::ops::Range<usize>,
-    cols: std::ops::Range<usize>,
-    target_bands: &[usize],
-    out_slices: &mut [&mut [f32]],
-    nodata: Option<f64>,
-) {
-    let plane_size = w * h;
-    for r in rows {
-        let local_r = r - orig_y;
-        let dst_r = r - win.row_start;
-        for c in cols.clone() {
-            let local_c = c - orig_x;
-            let dst_c = c - win.col_start;
-            let dst_idx = dst_r * out_w + dst_c;
-
-            for (i, &band) in target_bands.iter().enumerate() {
-                if let Some(out_slice) = out_slices.get_mut(i) {
-                    let linear_idx = if is_planar {
-                        band * plane_size + local_r * w + local_c
-                    } else {
-                        local_r * (w * samples) + local_c * samples + band
-                    };
-                    let off = linear_idx * 8;
-                    let val = if off + 7 < raw.len() {
-                        let bytes: [u8; 8] = [
+        (SampleFormat::Float, 64) => {
+            blit_typed(
+                raw,
+                chunk_w,
+                chunk_h,
+                samples_per_pixel,
+                is_planar,
+                origin_x,
+                origin_y,
+                win,
+                out_w,
+                rows,
+                cols,
+                target_bands,
+                out_slices,
+                nodata,
+                |raw, idx, _, _, _| {
+                    let off = idx * 8;
+                    if off + 7 < raw.len() {
+                        let b: [u8; 8] = [
                             raw[off],
                             raw[off + 1],
                             raw[off + 2],
@@ -409,23 +202,52 @@ fn blit_f64(
                             raw[off + 6],
                             raw[off + 7],
                         ];
-                        f64::from_ne_bytes(bytes) as f32
+                        f64::from_ne_bytes(b) as f32
                     } else {
                         f32::NAN
-                    };
-                    out_slice[dst_idx] = if is_nodata(val, nodata) {
-                        f32::NAN
-                    } else {
-                        val
-                    };
-                }
-            }
+                    }
+                },
+            );
+        }
+        _ => {
+            blit_typed(
+                raw,
+                chunk_w,
+                chunk_h,
+                samples_per_pixel,
+                is_planar,
+                origin_x,
+                origin_y,
+                win,
+                out_w,
+                rows,
+                cols,
+                target_bands,
+                out_slices,
+                nodata,
+                |raw, idx, r, c, band| {
+                    get_sample_generic(
+                        raw,
+                        chunk_w,
+                        samples_per_pixel,
+                        is_planar,
+                        idx,
+                        r,
+                        c,
+                        band,
+                        sample_fmt,
+                        bits_per_sample,
+                        is_white_zero,
+                    )
+                },
+            );
         }
     }
 }
 
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn blit_generic(
+fn blit_typed<F>(
     raw: &[u8],
     w: usize,
     h: usize,
@@ -433,9 +255,6 @@ fn blit_generic(
     is_planar: bool,
     orig_x: usize,
     orig_y: usize,
-    fmt: SampleFormat,
-    bits: u16,
-    is_white_zero: bool,
     win: &ReadWindow,
     out_w: usize,
     rows: std::ops::Range<usize>,
@@ -443,7 +262,11 @@ fn blit_generic(
     target_bands: &[usize],
     out_slices: &mut [&mut [f32]],
     nodata: Option<f64>,
-) {
+    extract: F,
+) where
+    F: Fn(&[u8], usize, usize, usize, usize) -> f32,
+{
+    let plane_size = w * h;
     for r in rows {
         let local_r = r - orig_y;
         let dst_r = r - win.row_start;
@@ -454,19 +277,12 @@ fn blit_generic(
 
             for (i, &band) in target_bands.iter().enumerate() {
                 if let Some(out_slice) = out_slices.get_mut(i) {
-                    let val = get_sample_generic(
-                        raw,
-                        w,
-                        h,
-                        samples,
-                        is_planar,
-                        local_r,
-                        local_c,
-                        band,
-                        fmt,
-                        bits,
-                        is_white_zero,
-                    );
+                    let linear_idx = if is_planar {
+                        band * plane_size + local_r * w + local_c
+                    } else {
+                        local_r * (w * samples) + local_c * samples + band
+                    };
+                    let val = extract(raw, linear_idx, local_r, local_c, band);
                     out_slice[dst_idx] = if is_nodata(val, nodata) {
                         f32::NAN
                     } else {
@@ -483,9 +299,9 @@ fn blit_generic(
 fn get_sample_generic(
     raw: &[u8],
     w: usize,
-    h: usize,
     samples: usize,
     is_planar: bool,
+    linear_idx: usize,
     r: usize,
     c: usize,
     band: usize,
@@ -493,12 +309,6 @@ fn get_sample_generic(
     bits: u16,
     is_white_zero: bool,
 ) -> f32 {
-    let linear_idx = if is_planar {
-        band * (w * h) + r * w + c
-    } else {
-        r * (w * samples) + c * samples + band
-    };
-
     match (fmt, bits) {
         (SampleFormat::Uint, 1) => {
             let row_bytes = (w * if is_planar { 1 } else { samples }).div_ceil(8);
@@ -524,10 +334,6 @@ fn get_sample_generic(
             };
             nibble as f32
         }
-        (SampleFormat::Int, 8) => raw
-            .get(linear_idx)
-            .map(|&b| b as i8 as f32)
-            .unwrap_or(f32::NAN),
         (SampleFormat::Uint, 12) => {
             let row_samples = w * if is_planar { 1 } else { samples };
             let row_bytes = (row_samples * 12).div_ceil(8);
@@ -594,8 +400,12 @@ pub fn is_nodata(val: f32, nodata: Option<f64>) -> bool {
         let nd_f32 = nd as f32;
         if nd_f32.is_nan() {
             val.is_nan()
+        } else if val.to_bits() == nd_f32.to_bits() {
+            true
         } else {
-            (val - nd_f32).abs() < 1e-6
+            let diff = (val - nd_f32).abs();
+            let threshold = (nd_f32.abs() * 1e-5).max(1e-6);
+            diff <= threshold
         }
     } else {
         false

@@ -8,6 +8,7 @@ pub mod palette;
 pub mod reader;
 pub mod slice;
 pub mod store;
+pub mod tasks;
 #[cfg(test)]
 pub mod tests;
 

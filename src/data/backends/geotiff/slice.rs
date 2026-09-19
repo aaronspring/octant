@@ -1,10 +1,12 @@
+//! Hyperslab block slicing coordinator for TIFF/GeoTIFF datasets.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_tiff::ImageFileDirectory;
 use async_tiff::decoder::DecoderRegistry;
 use async_tiff::reader::{AsyncFileReader, Endianness};
-use async_tiff::tags::{PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat};
+use async_tiff::tags::{PhotometricInterpretation, Predictor, SampleFormat};
 
 use crate::data::blocks::BlockStoreError;
 use crate::data::octant_block::OctantBlock;
@@ -14,6 +16,7 @@ use super::blit::{ReadWindow, blit_chunk_to_window};
 use super::coords::GeoSpatialBounds;
 use super::decode::unpredict_buffer;
 use super::palette::apply_colormap;
+use super::tasks::{ChunkTarget, build_chunk_tasks, parse_slice_request};
 
 /// Fetch and decode an `OctantBlock` from an IFD for a given `SliceRequest`.
 pub async fn fetch_geotiff_block(
@@ -172,22 +175,6 @@ pub async fn fetch_geotiff_block(
     ))
 }
 
-enum ChunkTarget {
-    Single(usize),
-    All,
-}
-
-struct ChunkTask {
-    offset: u64,
-    byte_count: u64,
-    orig_x: usize,
-    orig_y: usize,
-    chunk_w: usize,
-    chunk_h: usize,
-    samples_in_chunk: usize,
-    target: ChunkTarget,
-}
-
 async fn read_region(
     ifd: &ImageFileDirectory,
     endianness: Endianness,
@@ -281,173 +268,4 @@ async fn read_region(
     }
 
     Ok(())
-}
-
-fn build_chunk_tasks(
-    ifd: &ImageFileDirectory,
-    win: &ReadWindow,
-    target_bands: &[usize],
-) -> Result<Vec<ChunkTask>, BlockStoreError> {
-    let img_w = ifd.image_width() as usize;
-    let img_h = ifd.image_height() as usize;
-    let is_planar = ifd.planar_configuration() == PlanarConfiguration::Planar;
-    let samples = ifd.samples_per_pixel() as usize;
-
-    let mut tasks = Vec::new();
-
-    if let (Some(tw), Some(th)) = (ifd.tile_width(), ifd.tile_height()) {
-        let (tw, th) = (tw as usize, th as usize);
-        let (tiles_x, tiles_y) = ifd.tile_count().unwrap_or((1, 1));
-        let tx0 = win.col_start / tw;
-        let tx1 = ((win.col_end.saturating_sub(1)) / tw).min(tiles_x.saturating_sub(1));
-        let ty0 = win.row_start / th;
-        let ty1 = ((win.row_end.saturating_sub(1)) / th).min(tiles_y.saturating_sub(1));
-
-        let tile_offsets = ifd.tile_offsets().ok_or("Missing tile offsets")?;
-        let tile_byte_counts = ifd.tile_byte_counts().ok_or("Missing tile byte counts")?;
-        let tiles_per_band = tiles_x * tiles_y;
-
-        for ty in ty0..=ty1 {
-            for tx in tx0..=tx1 {
-                let orig_x = tx * tw;
-                let orig_y = ty * th;
-
-                if is_planar {
-                    for (i, &band) in target_bands.iter().enumerate() {
-                        let idx = band * tiles_per_band + ty * tiles_x + tx;
-                        if idx < tile_offsets.len() {
-                            tasks.push(ChunkTask {
-                                offset: tile_offsets[idx],
-                                byte_count: tile_byte_counts[idx],
-                                orig_x,
-                                orig_y,
-                                chunk_w: tw,
-                                chunk_h: th,
-                                samples_in_chunk: 1,
-                                target: ChunkTarget::Single(i),
-                            });
-                        }
-                    }
-                } else {
-                    let idx = ty * tiles_x + tx;
-                    if idx < tile_offsets.len() {
-                        tasks.push(ChunkTask {
-                            offset: tile_offsets[idx],
-                            byte_count: tile_byte_counts[idx],
-                            orig_x,
-                            orig_y,
-                            chunk_w: tw,
-                            chunk_h: th,
-                            samples_in_chunk: samples,
-                            target: ChunkTarget::All,
-                        });
-                    }
-                }
-            }
-        }
-    } else {
-        let rps = (ifd.rows_per_strip().unwrap_or(img_h as u32) as usize).min(img_h);
-        let strips_per_band = img_h.div_ceil(rps.max(1));
-        let s0 = win.row_start / rps.max(1);
-        let s1 =
-            ((win.row_end.saturating_sub(1)) / rps.max(1)).min(strips_per_band.saturating_sub(1));
-
-        let strip_offsets = ifd.strip_offsets().ok_or("Missing strip offsets")?;
-        let strip_byte_counts = ifd.strip_byte_counts().ok_or("Missing strip byte counts")?;
-
-        for s_idx in s0..=s1 {
-            let orig_y = s_idx * rps;
-            let strip_h = rps.min(img_h.saturating_sub(orig_y));
-
-            if is_planar {
-                for (i, &band) in target_bands.iter().enumerate() {
-                    let idx = band * strips_per_band + s_idx;
-                    if idx < strip_offsets.len() {
-                        tasks.push(ChunkTask {
-                            offset: strip_offsets[idx],
-                            byte_count: strip_byte_counts[idx],
-                            orig_x: 0,
-                            orig_y,
-                            chunk_w: img_w,
-                            chunk_h: strip_h,
-                            samples_in_chunk: 1,
-                            target: ChunkTarget::Single(i),
-                        });
-                    }
-                }
-            } else {
-                let idx = s_idx;
-                if idx < strip_offsets.len() {
-                    tasks.push(ChunkTask {
-                        offset: strip_offsets[idx],
-                        byte_count: strip_byte_counts[idx],
-                        orig_x: 0,
-                        orig_y,
-                        chunk_w: img_w,
-                        chunk_h: strip_h,
-                        samples_in_chunk: samples,
-                        target: ChunkTarget::All,
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(tasks)
-}
-
-fn parse_slice_request(
-    request: &SliceRequest,
-    ifd: &ImageFileDirectory,
-) -> (Option<usize>, (usize, usize), (usize, usize)) {
-    let img_w = ifd.image_width() as usize;
-    let img_h = ifd.image_height() as usize;
-    let var = request.variable.trim();
-
-    let band_idx = if var.contains("band_") {
-        var.rsplit("band_")
-            .next()
-            .and_then(|s| s.parse::<usize>().ok())
-            .map(|idx| idx.saturating_sub(1))
-    } else if (ifd.samples_per_pixel() == 1
-        && ifd.photometric_interpretation() != PhotometricInterpretation::RGBPalette)
-        || !var.contains("raster")
-    {
-        Some(0)
-    } else {
-        None
-    };
-
-    let (row_sel, col_sel) = if band_idx.is_some() || request.selections.len() <= 2 {
-        let r = request
-            .selections
-            .first()
-            .map(|s| s.bounds())
-            .unwrap_or((0, img_h));
-        let c = request
-            .selections
-            .get(1)
-            .map(|s| s.bounds())
-            .unwrap_or((0, img_w));
-        (r, c)
-    } else {
-        let r = request
-            .selections
-            .get(1)
-            .map(|s| s.bounds())
-            .unwrap_or((0, img_h));
-        let c = request
-            .selections
-            .get(2)
-            .map(|s| s.bounds())
-            .unwrap_or((0, img_w));
-        (r, c)
-    };
-
-    let row_start = row_sel.0.min(img_h);
-    let row_end = row_sel.1.max(row_start + 1).min(img_h);
-    let col_start = col_sel.0.min(img_w);
-    let col_end = col_sel.1.max(col_start + 1).min(img_w);
-
-    (band_idx, (row_start, row_end), (col_start, col_end))
 }
