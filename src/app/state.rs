@@ -14,6 +14,7 @@ pub enum StoreKind {
     RemoteIcechunk,
     LocalIcechunk,
     LocalNetCdf,
+    LocalGeoTiff,
     ProceduralVolume4D,
     ProceduralRandom,
 }
@@ -26,6 +27,7 @@ impl StoreKind {
             StoreKind::RemoteIcechunk => crate::data::DataSourceKind::RemoteIcechunk,
             StoreKind::LocalIcechunk => crate::data::DataSourceKind::LocalIcechunk,
             StoreKind::LocalNetCdf => crate::data::DataSourceKind::NetCdf,
+            StoreKind::LocalGeoTiff => crate::data::DataSourceKind::GeoTiff,
             StoreKind::ProceduralVolume4D | StoreKind::ProceduralRandom => {
                 crate::data::DataSourceKind::Procedural
             }
@@ -39,6 +41,7 @@ impl StoreKind {
             crate::data::DataSourceKind::RemoteIcechunk => StoreKind::RemoteIcechunk,
             crate::data::DataSourceKind::LocalIcechunk => StoreKind::LocalIcechunk,
             crate::data::DataSourceKind::NetCdf => StoreKind::LocalNetCdf,
+            crate::data::DataSourceKind::GeoTiff => StoreKind::LocalGeoTiff,
             crate::data::DataSourceKind::Procedural => StoreKind::ProceduralVolume4D,
             _ => StoreKind::ProceduralRandom,
         }
@@ -62,6 +65,7 @@ impl StoreKind {
                 if (kind == StoreKind::RemoteZarr && inf == StoreKind::RemoteIcechunk)
                     || (kind == StoreKind::LocalZarr && inf == StoreKind::LocalIcechunk)
                     || (kind == StoreKind::LocalZarr && inf == StoreKind::LocalNetCdf)
+                    || (kind == StoreKind::LocalZarr && inf == StoreKind::LocalGeoTiff)
                 {
                     inf
                 } else {
