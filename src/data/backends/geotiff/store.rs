@@ -90,7 +90,7 @@ impl GeoTiffBlockStore {
 
         let tiff = TIFF::new(ifds, metadata_reader.endianness());
         let metadata = inspect_tiff(&tiff, name);
-        let decoder_registry = Arc::new(super::decompress::create_robust_decoder_registry());
+        let decoder_registry = Arc::new(super::decode::create_decoder_registry());
 
         Ok(Self {
             uri: name.to_string(),
@@ -147,16 +147,28 @@ impl BlockStore for GeoTiffBlockStore {
         {
             let rt = crate::utils::executor::get_shared_tokio_rt();
             rt.block_on(async {
-                fetch_geotiff_block(ifd, request, self.reader.as_ref(), &self.decoder_registry)
-                    .await
+                fetch_geotiff_block(
+                    ifd,
+                    self.tiff.endianness(),
+                    request,
+                    self.reader.as_ref(),
+                    &self.decoder_registry,
+                )
+                .await
             })
         }
 
         #[cfg(target_arch = "wasm32")]
         {
             futures::executor::block_on(async {
-                fetch_geotiff_block(ifd, request, self.reader.as_ref(), &self.decoder_registry)
-                    .await
+                fetch_geotiff_block(
+                    ifd,
+                    self.tiff.endianness(),
+                    request,
+                    self.reader.as_ref(),
+                    &self.decoder_registry,
+                )
+                .await
             })
         }
     }

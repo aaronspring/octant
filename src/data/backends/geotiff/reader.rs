@@ -36,6 +36,47 @@ impl AsyncFileReader for MemoryTiffReader {
     }
 }
 
+/// Robust Tokio async file reader that pre-allocates buffer space for range reads.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct TokioFileReader {
+    file: tokio::sync::Mutex<tokio::fs::File>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TokioFileReader {
+    pub fn new(file: tokio::fs::File) -> Self {
+        Self {
+            file: tokio::sync::Mutex::new(file),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl AsyncFileReader for TokioFileReader {
+    async fn get_bytes(&self, range: Range<u64>) -> AsyncTiffResult<Bytes> {
+        use std::io::SeekFrom;
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let mut file = self.file.lock().await;
+        file.seek(SeekFrom::Start(range.start)).await?;
+
+        let to_read = (range.end.saturating_sub(range.start)) as usize;
+        let mut buffer = vec![0u8; to_read];
+        let mut total_read = 0;
+        while total_read < to_read {
+            let n = file.read(&mut buffer[total_read..]).await?;
+            if n == 0 {
+                break;
+            }
+            total_read += n;
+        }
+        buffer.truncate(total_read);
+        Ok(Bytes::from(buffer))
+    }
+}
+
 /// WASM HTTP byte range reader backed by browser `window.fetch`.
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone)]
@@ -89,7 +130,7 @@ pub async fn create_async_reader(
             let file = tokio::fs::File::open(file_path)
                 .await
                 .map_err(|e| format!("Failed to open TIFF file at '{file_path}': {e}"))?;
-            let reader = async_tiff::reader::TokioReader::new(file);
+            let reader = TokioFileReader::new(file);
             Ok(Arc::new(reader))
         }
     }

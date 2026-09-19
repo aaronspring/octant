@@ -1,16 +1,6 @@
-//! Sample blitting and hyperslab window mapping routines.
+//! Direct sample blitting from decoded TIFF chunk buffers to output slices.
 
-/// Source sample buffer and geometry descriptor for blitting.
-#[derive(Debug, Clone, Copy)]
-pub struct BlitSource<'a> {
-    pub samples: &'a [f32],
-    pub origin_x: usize,
-    pub origin_y: usize,
-    pub width: usize,
-    pub height: usize,
-    pub samples_per_pixel: usize,
-    pub is_planar: bool,
-}
+use async_tiff::tags::SampleFormat;
 
 /// Sliced hyperslab window coordinate ranges.
 #[derive(Debug, Clone, Copy)]
@@ -22,37 +12,62 @@ pub struct ReadWindow {
     pub nodata_val: Option<f64>,
 }
 
-/// Blit decoded samples from a tile/strip into the output hyperslab windows.
-pub fn blit_samples_to_window(
-    src: &BlitSource<'_>,
+/// Blit decoded raw bytes from a chunk (tile or strip) directly into destination hyperslab slices.
+#[allow(clippy::too_many_arguments)]
+pub fn blit_chunk_to_window(
+    raw: &[u8],
+    chunk_w: usize,
+    chunk_h: usize,
+    samples_per_pixel: usize,
+    is_planar: bool,
+    origin_x: usize,
+    origin_y: usize,
+    sample_fmt: SampleFormat,
+    bits_per_sample: u16,
+    is_white_zero: bool,
     win: &ReadWindow,
     target_bands: &[usize],
     out_slices: &mut [&mut [f32]],
 ) {
     let out_w = win.col_end.saturating_sub(win.col_start).max(1);
-    let r_min = win.row_start.max(src.origin_y);
-    let r_max = win.row_end.min(src.origin_y + src.height);
-    let c_min = win.col_start.max(src.origin_x);
-    let c_max = win.col_end.min(src.origin_x + src.width);
+    let r_min = win
+        .row_start
+        .max(origin_y)
+        .min(win.row_end.min(origin_y + chunk_h));
+    let r_max = win.row_end.min(origin_y + chunk_h);
+    let c_min = win
+        .col_start
+        .max(origin_x)
+        .min(win.col_end.min(origin_x + chunk_w));
+    let c_max = win.col_end.min(origin_x + chunk_w);
+
+    if r_min >= r_max || c_min >= c_max {
+        return;
+    }
 
     for r in r_min..r_max {
-        let local_r = r - src.origin_y;
+        let local_r = r - origin_y;
         let dst_r = r - win.row_start;
         for c in c_min..c_max {
-            let local_c = c - src.origin_x;
+            let local_c = c - origin_x;
             let dst_c = c - win.col_start;
             let dst_idx = dst_r * out_w + dst_c;
 
             for (i, &band) in target_bands.iter().enumerate() {
                 if let Some(out_slice) = out_slices.get_mut(i) {
-                    let s_idx = if src.is_planar {
-                        band * src.width * src.height + local_r * src.width + local_c
-                    } else {
-                        local_r * src.width * src.samples_per_pixel
-                            + local_c * src.samples_per_pixel
-                            + band
-                    };
-                    let val = src.samples.get(s_idx).copied().unwrap_or(f32::NAN);
+                    let val = get_sample(
+                        raw,
+                        chunk_w,
+                        chunk_h,
+                        samples_per_pixel,
+                        is_planar,
+                        local_r,
+                        local_c,
+                        band,
+                        sample_fmt,
+                        bits_per_sample,
+                        is_white_zero,
+                    );
                     out_slice[dst_idx] = if is_nodata(val, win.nodata_val) {
                         f32::NAN
                     } else {
@@ -64,7 +79,152 @@ pub fn blit_samples_to_window(
     }
 }
 
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn get_sample(
+    raw: &[u8],
+    w: usize,
+    h: usize,
+    samples: usize,
+    is_planar: bool,
+    r: usize,
+    c: usize,
+    band: usize,
+    fmt: SampleFormat,
+    bits: u16,
+    is_white_zero: bool,
+) -> f32 {
+    let linear_idx = if is_planar {
+        band * (w * h) + r * w + c
+    } else {
+        r * (w * samples) + c * samples + band
+    };
+
+    match (fmt, bits) {
+        (SampleFormat::Uint, 1) => {
+            let row_bytes = (w * if is_planar { 1 } else { samples }).div_ceil(8);
+            let s_in_row = if is_planar { c } else { c * samples + band };
+            let byte_idx = r * row_bytes + s_in_row / 8;
+            let bit_idx = 7 - (s_in_row % 8);
+            let bit = raw.get(byte_idx).map(|&b| (b >> bit_idx) & 1).unwrap_or(0);
+            if is_white_zero {
+                if bit == 0 { 1.0 } else { 0.0 }
+            } else {
+                bit as f32
+            }
+        }
+        (SampleFormat::Uint, 4) => {
+            let row_bytes = (w * if is_planar { 1 } else { samples }).div_ceil(2);
+            let s_in_row = if is_planar { c } else { c * samples + band };
+            let byte_idx = r * row_bytes + s_in_row / 2;
+            let byte = raw.get(byte_idx).copied().unwrap_or(0);
+            let nibble = if s_in_row % 2 == 0 {
+                byte >> 4
+            } else {
+                byte & 0x0F
+            };
+            nibble as f32
+        }
+        (SampleFormat::Uint, 8) => {
+            let byte = raw.get(linear_idx).copied().unwrap_or(0);
+            if is_white_zero {
+                (255 - byte) as f32
+            } else {
+                byte as f32
+            }
+        }
+        (SampleFormat::Int, 8) => raw
+            .get(linear_idx)
+            .map(|&b| b as i8 as f32)
+            .unwrap_or(f32::NAN),
+        (SampleFormat::Uint, 12) => {
+            let row_samples = w * if is_planar { 1 } else { samples };
+            let row_bytes = (row_samples * 12).div_ceil(8);
+            let s_in_row = if is_planar { c } else { c * samples + band };
+            let pair_idx = s_in_row / 2;
+            let byte_idx = r * row_bytes + pair_idx * 3;
+            if s_in_row % 2 == 0 {
+                let b0 = raw.get(byte_idx).copied().unwrap_or(0) as u16;
+                let b1 = raw.get(byte_idx + 1).copied().unwrap_or(0) as u16;
+                ((b0 << 4) | (b1 >> 4)) as f32
+            } else {
+                let b1 = raw.get(byte_idx + 1).copied().unwrap_or(0) as u16;
+                let b2 = raw.get(byte_idx + 2).copied().unwrap_or(0) as u16;
+                (((b1 & 0x0F) << 8) | b2) as f32
+            }
+        }
+        (SampleFormat::Uint, 16) => {
+            let off = linear_idx * 2;
+            if off + 1 < raw.len() {
+                u16::from_ne_bytes([raw[off], raw[off + 1]]) as f32
+            } else {
+                f32::NAN
+            }
+        }
+        (SampleFormat::Int, 16) => {
+            let off = linear_idx * 2;
+            if off + 1 < raw.len() {
+                i16::from_ne_bytes([raw[off], raw[off + 1]]) as f32
+            } else {
+                f32::NAN
+            }
+        }
+        (SampleFormat::Float, 16) => {
+            let off = linear_idx * 2;
+            if off + 1 < raw.len() {
+                half::f16::from_bits(u16::from_ne_bytes([raw[off], raw[off + 1]])).to_f32()
+            } else {
+                f32::NAN
+            }
+        }
+        (SampleFormat::Uint, 32) => {
+            let off = linear_idx * 4;
+            raw.get(off..off + 4)
+                .and_then(|s| s.try_into().ok())
+                .map(|b| u32::from_ne_bytes(b) as f32)
+                .unwrap_or(f32::NAN)
+        }
+        (SampleFormat::Int, 32) => {
+            let off = linear_idx * 4;
+            raw.get(off..off + 4)
+                .and_then(|s| s.try_into().ok())
+                .map(|b| i32::from_ne_bytes(b) as f32)
+                .unwrap_or(f32::NAN)
+        }
+        (SampleFormat::Float, 32) => {
+            let off = linear_idx * 4;
+            raw.get(off..off + 4)
+                .and_then(|s| s.try_into().ok())
+                .map(f32::from_ne_bytes)
+                .unwrap_or(f32::NAN)
+        }
+        (SampleFormat::Float, 64) => {
+            let off = linear_idx * 8;
+            raw.get(off..off + 8)
+                .and_then(|s| s.try_into().ok())
+                .map(|b| f64::from_ne_bytes(b) as f32)
+                .unwrap_or(f32::NAN)
+        }
+        (SampleFormat::Uint, 64) => {
+            let off = linear_idx * 8;
+            raw.get(off..off + 8)
+                .and_then(|s| s.try_into().ok())
+                .map(|b| u64::from_ne_bytes(b) as f32)
+                .unwrap_or(f32::NAN)
+        }
+        (SampleFormat::Int, 64) => {
+            let off = linear_idx * 8;
+            raw.get(off..off + 8)
+                .and_then(|s| s.try_into().ok())
+                .map(|b| i64::from_ne_bytes(b) as f32)
+                .unwrap_or(f32::NAN)
+        }
+        _ => raw.get(linear_idx).map(|&b| b as f32).unwrap_or(f32::NAN),
+    }
+}
+
 /// Check if sample equals the specified nodata sentinel value.
+#[inline]
 pub fn is_nodata(val: f32, nodata: Option<f64>) -> bool {
     if val.is_nan() {
         return true;
