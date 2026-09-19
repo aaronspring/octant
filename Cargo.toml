@@ -61,7 +61,7 @@ zarrs_object_store = { version = "0.7", features = ["http"] }
 zarrs_icechunk = "0.5"
 icechunk = "2.1.2"
 object_store = { version = "0.14", features = ["http", "aws", "azure", "gcp"] }
-async-tiff = { path = "dev/async-tiff", features = ["object_store", "reqwest", "tokio"] }
+async-tiff = { version = "0.4.0", features = ["object_store", "reqwest", "tokio"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
@@ -74,7 +74,7 @@ web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlC
 js-sys = "0.3"
 blusc = "0.0.6"
 getrandom = { version = "0.4", features = ["wasm_js"] }
-async-tiff = { path = "dev/async-tiff", default-features = false }
+async-tiff = { version = "0.4.0", default-features = false }
 
 [dev-dependencies]
 blusc = "0.0.6"

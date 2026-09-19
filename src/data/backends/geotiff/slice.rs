@@ -105,13 +105,20 @@ pub async fn fetch_geotiff_block(
             .await?;
 
             let bits = ifd.bits_per_sample().first().copied().unwrap_or(8);
-            for b in 0..3 {
-                let slice = &mut buffer[b * plane_len..(b + 1) * plane_len];
-                slice.copy_from_slice(&apply_colormap(&idx_buf, cmap, bits, b));
+            for ch in 0..3 {
+                let start = ch * plane_len;
+                let end = start + plane_len;
+                let rgb_plane = apply_colormap(&idx_buf, cmap, bits, ch);
+                buffer[start..end].copy_from_slice(&rgb_plane);
             }
         } else {
-            let target_bands: Vec<usize> = (0..total_bands).collect();
-            let mut slices: Vec<&mut [f32]> = buffer.chunks_exact_mut(plane_len).collect();
+            let (mut band_slices, target_bands): (Vec<&mut [f32]>, Vec<usize>) = buffer
+                .chunks_mut(plane_len)
+                .enumerate()
+                .take(total_bands)
+                .map(|(i, chunk)| (chunk, i))
+                .unzip();
+
             read_region(
                 ifd,
                 endianness,
@@ -119,7 +126,7 @@ pub async fn fetch_geotiff_block(
                 decoder_registry,
                 &window,
                 &target_bands,
-                &mut slices,
+                &mut band_slices,
             )
             .await?;
         }
@@ -165,6 +172,22 @@ pub async fn fetch_geotiff_block(
     ))
 }
 
+enum ChunkTarget {
+    Single(usize),
+    All,
+}
+
+struct ChunkTask {
+    offset: u64,
+    byte_count: u64,
+    orig_x: usize,
+    orig_y: usize,
+    chunk_w: usize,
+    chunk_h: usize,
+    samples_in_chunk: usize,
+    target: ChunkTarget,
+}
+
 async fn read_region(
     ifd: &ImageFileDirectory,
     endianness: Endianness,
@@ -174,10 +197,6 @@ async fn read_region(
     target_bands: &[usize],
     out_slices: &mut [&mut [f32]],
 ) -> Result<(), BlockStoreError> {
-    let img_w = ifd.image_width() as usize;
-    let img_h = ifd.image_height() as usize;
-    let is_planar = ifd.planar_configuration() == PlanarConfiguration::Planar;
-    let samples = ifd.samples_per_pixel() as usize;
     let bits = ifd.bits_per_sample().first().copied().unwrap_or(8);
     let sample_fmt = ifd
         .sample_format()
@@ -191,6 +210,90 @@ async fn read_region(
         .as_ref()
         .get(&ifd.compression())
         .ok_or_else(|| format!("Unsupported compression: {:?}", ifd.compression()))?;
+
+    let tasks = build_chunk_tasks(ifd, win, target_bands)?;
+
+    for task in tasks {
+        let raw = reader
+            .get_bytes(task.offset..task.offset + task.byte_count)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let decomp = decoder
+            .decode_tile(
+                raw,
+                ifd.photometric_interpretation(),
+                ifd.jpeg_tables(),
+                task.samples_in_chunk as u16,
+                bits,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+
+        let unpred = unpredict_buffer(
+            decomp,
+            predictor,
+            task.samples_in_chunk,
+            bits,
+            task.chunk_w,
+            endianness,
+        )
+        .map_err(|e| e.to_string())?;
+
+        match task.target {
+            ChunkTarget::Single(out_idx) => {
+                if let Some(out_slice) = out_slices.get_mut(out_idx) {
+                    blit_chunk_to_window(
+                        &unpred,
+                        task.chunk_w,
+                        task.chunk_h,
+                        1,
+                        true,
+                        task.orig_x,
+                        task.orig_y,
+                        sample_fmt,
+                        bits,
+                        is_white_zero,
+                        win,
+                        &[0],
+                        &mut [out_slice],
+                    );
+                }
+            }
+            ChunkTarget::All => {
+                blit_chunk_to_window(
+                    &unpred,
+                    task.chunk_w,
+                    task.chunk_h,
+                    task.samples_in_chunk,
+                    false,
+                    task.orig_x,
+                    task.orig_y,
+                    sample_fmt,
+                    bits,
+                    is_white_zero,
+                    win,
+                    target_bands,
+                    out_slices,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn build_chunk_tasks(
+    ifd: &ImageFileDirectory,
+    win: &ReadWindow,
+    target_bands: &[usize],
+) -> Result<Vec<ChunkTask>, BlockStoreError> {
+    let img_w = ifd.image_width() as usize;
+    let img_h = ifd.image_height() as usize;
+    let is_planar = ifd.planar_configuration() == PlanarConfiguration::Planar;
+    let samples = ifd.samples_per_pixel() as usize;
+
+    let mut tasks = Vec::new();
 
     if let (Some(tw), Some(th)) = (ifd.tile_width(), ifd.tile_height()) {
         let (tw, th) = (tw as usize, th as usize);
@@ -212,79 +315,33 @@ async fn read_region(
                 if is_planar {
                     for (i, &band) in target_bands.iter().enumerate() {
                         let idx = band * tiles_per_band + ty * tiles_x + tx;
-                        if idx >= tile_offsets.len() {
-                            continue;
-                        }
-                        let raw = reader
-                            .get_bytes(tile_offsets[idx]..tile_offsets[idx] + tile_byte_counts[idx])
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        let decomp = decoder
-                            .decode_tile(
-                                raw,
-                                ifd.photometric_interpretation(),
-                                ifd.jpeg_tables(),
-                                1,
-                                bits,
-                                None,
-                            )
-                            .map_err(|e| e.to_string())?;
-                        let unpred = unpredict_buffer(decomp, predictor, 1, bits, tw, endianness)
-                            .map_err(|e| e.to_string())?;
-                        if let Some(out_slice) = out_slices.get_mut(i) {
-                            blit_chunk_to_window(
-                                &unpred,
-                                tw,
-                                th,
-                                1,
-                                true,
+                        if idx < tile_offsets.len() {
+                            tasks.push(ChunkTask {
+                                offset: tile_offsets[idx],
+                                byte_count: tile_byte_counts[idx],
                                 orig_x,
                                 orig_y,
-                                sample_fmt,
-                                bits,
-                                is_white_zero,
-                                win,
-                                &[0],
-                                &mut [out_slice],
-                            );
+                                chunk_w: tw,
+                                chunk_h: th,
+                                samples_in_chunk: 1,
+                                target: ChunkTarget::Single(i),
+                            });
                         }
                     }
                 } else {
                     let idx = ty * tiles_x + tx;
-                    if idx >= tile_offsets.len() {
-                        continue;
+                    if idx < tile_offsets.len() {
+                        tasks.push(ChunkTask {
+                            offset: tile_offsets[idx],
+                            byte_count: tile_byte_counts[idx],
+                            orig_x,
+                            orig_y,
+                            chunk_w: tw,
+                            chunk_h: th,
+                            samples_in_chunk: samples,
+                            target: ChunkTarget::All,
+                        });
                     }
-                    let raw = reader
-                        .get_bytes(tile_offsets[idx]..tile_offsets[idx] + tile_byte_counts[idx])
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let decomp = decoder
-                        .decode_tile(
-                            raw,
-                            ifd.photometric_interpretation(),
-                            ifd.jpeg_tables(),
-                            samples as u16,
-                            bits,
-                            None,
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let unpred = unpredict_buffer(decomp, predictor, samples, bits, tw, endianness)
-                        .map_err(|e| e.to_string())?;
-                    blit_chunk_to_window(
-                        &unpred,
-                        tw,
-                        th,
-                        samples,
-                        false,
-                        orig_x,
-                        orig_y,
-                        sample_fmt,
-                        bits,
-                        is_white_zero,
-                        win,
-                        target_bands,
-                        out_slices,
-                    );
                 }
             }
         }
@@ -305,83 +362,38 @@ async fn read_region(
             if is_planar {
                 for (i, &band) in target_bands.iter().enumerate() {
                     let idx = band * strips_per_band + s_idx;
-                    if idx >= strip_offsets.len() {
-                        continue;
-                    }
-                    let raw = reader
-                        .get_bytes(strip_offsets[idx]..strip_offsets[idx] + strip_byte_counts[idx])
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let decomp = decoder
-                        .decode_tile(
-                            raw,
-                            ifd.photometric_interpretation(),
-                            ifd.jpeg_tables(),
-                            1,
-                            bits,
-                            None,
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let unpred = unpredict_buffer(decomp, predictor, 1, bits, img_w, endianness)
-                        .map_err(|e| e.to_string())?;
-                    if let Some(out_slice) = out_slices.get_mut(i) {
-                        blit_chunk_to_window(
-                            &unpred,
-                            img_w,
-                            strip_h,
-                            1,
-                            true,
-                            0,
+                    if idx < strip_offsets.len() {
+                        tasks.push(ChunkTask {
+                            offset: strip_offsets[idx],
+                            byte_count: strip_byte_counts[idx],
+                            orig_x: 0,
                             orig_y,
-                            sample_fmt,
-                            bits,
-                            is_white_zero,
-                            win,
-                            &[0],
-                            &mut [out_slice],
-                        );
+                            chunk_w: img_w,
+                            chunk_h: strip_h,
+                            samples_in_chunk: 1,
+                            target: ChunkTarget::Single(i),
+                        });
                     }
                 }
             } else {
                 let idx = s_idx;
-                if idx >= strip_offsets.len() {
-                    continue;
+                if idx < strip_offsets.len() {
+                    tasks.push(ChunkTask {
+                        offset: strip_offsets[idx],
+                        byte_count: strip_byte_counts[idx],
+                        orig_x: 0,
+                        orig_y,
+                        chunk_w: img_w,
+                        chunk_h: strip_h,
+                        samples_in_chunk: samples,
+                        target: ChunkTarget::All,
+                    });
                 }
-                let raw = reader
-                    .get_bytes(strip_offsets[idx]..strip_offsets[idx] + strip_byte_counts[idx])
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let decomp = decoder
-                    .decode_tile(
-                        raw,
-                        ifd.photometric_interpretation(),
-                        ifd.jpeg_tables(),
-                        samples as u16,
-                        bits,
-                        None,
-                    )
-                    .map_err(|e| e.to_string())?;
-                let unpred = unpredict_buffer(decomp, predictor, samples, bits, img_w, endianness)
-                    .map_err(|e| e.to_string())?;
-                blit_chunk_to_window(
-                    &unpred,
-                    img_w,
-                    strip_h,
-                    samples,
-                    false,
-                    0,
-                    orig_y,
-                    sample_fmt,
-                    bits,
-                    is_white_zero,
-                    win,
-                    target_bands,
-                    out_slices,
-                );
             }
         }
     }
-    Ok(())
+
+    Ok(tasks)
 }
 
 fn parse_slice_request(

@@ -473,6 +473,8 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 [[package]]
 name = "async-tiff"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "668319ee04fb69d0ef46778e73bd7c17ec111de809fa89a5c407d08cbbb9c444"
 dependencies = [
  "async-trait",
  "bytemuck",
