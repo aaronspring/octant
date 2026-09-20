@@ -13,9 +13,10 @@ use crate::data::metadata::DatasetMetadata;
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::SliceRequest;
 
+use super::decode::create_decoder_registry;
 use super::inspect::inspect_tiff;
 use super::reader::{MemoryTiffReader, create_async_reader};
-use super::slice::fetch_geotiff_block;
+use super::slicing::fetch_geotiff_block;
 
 /// BlockStore for reading tiled and striped TIFF/GeoTIFF raster datasets.
 pub struct GeoTiffBlockStore {
@@ -84,7 +85,7 @@ impl GeoTiffBlockStore {
         }
         let tiff = TIFF::new(ifds, meta_reader.endianness());
         let metadata = inspect_tiff(&tiff, name);
-        let decoder_registry = Arc::new(super::decode::create_decoder_registry());
+        let decoder_registry = Arc::new(create_decoder_registry());
         Ok(Self {
             uri: name.into(),
             reader,

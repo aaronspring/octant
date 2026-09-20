@@ -1,4 +1,4 @@
-//! GeoTIFF and TIFF storage backend implementation.
+//! TIFF and Cloud-Optimized GeoTIFF (COG) storage backend.
 
 pub mod blit;
 pub mod coords;
@@ -6,13 +6,17 @@ pub mod decode;
 pub mod inspect;
 pub mod palette;
 pub mod reader;
-pub mod slice;
+pub mod slicing;
 pub mod store;
+pub mod wasm;
+
 #[cfg(test)]
 pub mod test_utils;
 #[cfg(test)]
 pub mod tests;
-pub mod wasm;
 
+pub use inspect::inspect_tiff;
 pub use store::GeoTiffBlockStore;
-pub use wasm::WasmGeoTiffBlockStore;
+pub use wasm::{
+    WasmGeoTiffBlockStore, inspect_wasm_remote_geotiff, load_one_geotiff_wasm_with_progress,
+};

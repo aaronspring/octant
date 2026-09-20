@@ -15,93 +15,7 @@ pub fn inspect_tiff(tiff: &TIFF, source_name: &str) -> DatasetMetadata {
     let mut dimension_coordinates = HashMap::new();
 
     for (ifd_idx, ifd) in tiff.ifds().iter().enumerate() {
-        let prefix = if ifd_idx == 0 {
-            String::new()
-        } else {
-            format!("overview_{ifd_idx}/")
-        };
-        let (width, height, samples) = (
-            ifd.image_width() as u64,
-            ifd.image_height() as u64,
-            ifd.samples_per_pixel() as u64,
-        );
-        let data_type_str = extract_data_type_name(ifd);
-        let attributes = extract_ifd_attributes(ifd);
-        let chunk_shape = extract_chunk_shape(ifd, width, height);
-        let geo_bounds = GeoSpatialBounds::from_ifd(ifd);
-        let photometric = ifd.photometric_interpretation();
-        let is_palette =
-            photometric == PhotometricInterpretation::RGBPalette && ifd.colormap().is_some();
-        let num_bands = if is_palette { 3 } else { samples };
-        let is_cmyk = photometric == PhotometricInterpretation::CMYK;
-
-        if num_bands > 1 {
-            let raster_name = format!("{prefix}raster");
-            geo_bounds.populate_dimension_coordinates(&raster_name, &mut dimension_coordinates);
-            variables.push(VariableInfo {
-                name: raster_name,
-                data_type: if is_palette {
-                    "float32".into()
-                } else {
-                    data_type_str.clone()
-                },
-                shape: vec![num_bands, height, width],
-                dimension_names: vec!["band".into(), "y".into(), "x".into()],
-                chunk_shape: vec![1, chunk_shape[0], chunk_shape[1]],
-                file_size: width * height * num_bands * 4,
-                units: None,
-                long_name: Some(if is_cmyk {
-                    "CMYK raster".into()
-                } else {
-                    "Multi-band raster".into()
-                }),
-                time_coverage_start: None,
-                time_coverage_end: None,
-                temporal_resolution: None,
-                attributes: attributes.clone(),
-            });
-        }
-
-        for band_idx in 0..samples {
-            let var_name = if samples == 1 {
-                if prefix.is_empty() {
-                    "band_1".into()
-                } else {
-                    format!("{prefix}band_1")
-                }
-            } else {
-                format!("{prefix}band_{}", band_idx + 1)
-            };
-
-            geo_bounds.populate_dimension_coordinates(&var_name, &mut dimension_coordinates);
-            let band_long_name = if is_cmyk {
-                match band_idx {
-                    0 => "Cyan (C)",
-                    1 => "Magenta (M)",
-                    2 => "Yellow (Y)",
-                    3 => "Black (K)",
-                    _ => "Band",
-                }
-                .into()
-            } else {
-                format!("Band {}", band_idx + 1)
-            };
-
-            variables.push(VariableInfo {
-                name: var_name,
-                data_type: data_type_str.clone(),
-                shape: vec![height, width],
-                dimension_names: vec!["y".into(), "x".into()],
-                chunk_shape: chunk_shape.clone(),
-                file_size: width * height * 4,
-                units: None,
-                long_name: Some(band_long_name),
-                time_coverage_start: None,
-                time_coverage_end: None,
-                temporal_resolution: None,
-                attributes: attributes.clone(),
-            });
-        }
+        inspect_single_ifd(ifd_idx, ifd, &mut variables, &mut dimension_coordinates);
     }
 
     DatasetMetadata {
@@ -109,6 +23,129 @@ pub fn inspect_tiff(tiff: &TIFF, source_name: &str) -> DatasetMetadata {
         store_type: "GeoTIFF".to_string(),
         variables,
         dimension_coordinates,
+    }
+}
+
+fn inspect_single_ifd(
+    ifd_idx: usize,
+    ifd: &ImageFileDirectory,
+    variables: &mut Vec<VariableInfo>,
+    dimension_coordinates: &mut HashMap<String, Vec<String>>,
+) {
+    let prefix = if ifd_idx == 0 {
+        String::new()
+    } else {
+        format!("overview_{ifd_idx}/")
+    };
+    let (width, height, samples) = (
+        ifd.image_width() as u64,
+        ifd.image_height() as u64,
+        ifd.samples_per_pixel() as u64,
+    );
+    let data_type_str = extract_data_type_name(ifd);
+    let attributes = extract_ifd_attributes(ifd);
+    let chunk_shape = extract_chunk_shape(ifd, width, height);
+    let geo_bounds = GeoSpatialBounds::from_ifd(ifd);
+    let is_palette = ifd.photometric_interpretation() == PhotometricInterpretation::RGBPalette
+        && ifd.colormap().is_some();
+    let num_bands = if is_palette { 3 } else { samples };
+    let is_cmyk = ifd.photometric_interpretation() == PhotometricInterpretation::CMYK;
+
+    if num_bands > 1 {
+        let raster_name = format!("{prefix}raster");
+        geo_bounds.populate_dimension_coordinates(&raster_name, dimension_coordinates);
+        variables.push(VariableInfo {
+            name: raster_name,
+            data_type: if is_palette {
+                "float32".into()
+            } else {
+                data_type_str.clone()
+            },
+            shape: vec![num_bands, height, width],
+            dimension_names: vec!["band".into(), "y".into(), "x".into()],
+            chunk_shape: vec![1, chunk_shape[0], chunk_shape[1]],
+            file_size: width * height * num_bands * 4,
+            units: None,
+            long_name: Some(if is_cmyk {
+                "CMYK raster".into()
+            } else {
+                "Multi-band raster".into()
+            }),
+            time_coverage_start: None,
+            time_coverage_end: None,
+            temporal_resolution: None,
+            attributes: attributes.clone(),
+        });
+    }
+
+    add_band_variables(
+        &prefix,
+        samples,
+        width,
+        height,
+        &data_type_str,
+        &chunk_shape,
+        is_cmyk,
+        &attributes,
+        &geo_bounds,
+        variables,
+        dimension_coordinates,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_band_variables(
+    prefix: &str,
+    samples: u64,
+    width: u64,
+    height: u64,
+    data_type_str: &str,
+    chunk_shape: &[u64],
+    is_cmyk: bool,
+    attributes: &HashMap<String, String>,
+    geo_bounds: &GeoSpatialBounds,
+    variables: &mut Vec<VariableInfo>,
+    dimension_coordinates: &mut HashMap<String, Vec<String>>,
+) {
+    for band_idx in 0..samples {
+        let var_name = if samples == 1 {
+            if prefix.is_empty() {
+                "band_1".into()
+            } else {
+                format!("{prefix}band_1")
+            }
+        } else {
+            format!("{prefix}band_{}", band_idx + 1)
+        };
+
+        geo_bounds.populate_dimension_coordinates(&var_name, dimension_coordinates);
+        let band_long_name = if is_cmyk {
+            match band_idx {
+                0 => "Cyan (C)",
+                1 => "Magenta (M)",
+                2 => "Yellow (Y)",
+                3 => "Black (K)",
+                _ => "Band",
+            }
+            .into()
+        } else {
+            format!("Band {}", band_idx + 1)
+        };
+
+        variables.push(VariableInfo {
+            name: var_name,
+            data_type: data_type_str.to_string(),
+            shape: vec![height, width],
+            dimension_names: vec!["y".into(), "x".into()],
+            chunk_shape: chunk_shape.to_vec(),
+            file_size: width * height * 4,
+            units: None,
+            long_name: Some(band_long_name),
+            time_coverage_start: None,
+            time_coverage_end: None,
+            temporal_resolution: None,
+            attributes: attributes.clone(),
+        });
     }
 }
 

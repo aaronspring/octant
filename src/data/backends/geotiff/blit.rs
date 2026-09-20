@@ -47,10 +47,12 @@ pub fn blit_chunk_to_window(
 
     let plane_size = chunk_w * chunk_h;
     for r in r_min..r_max {
-        let (local_r, dst_r) = (r - origin_y, r - win.row_start);
+        let local_r = r - origin_y;
+        let dst_row_base = (r - win.row_start) * out_w;
+
         for c in c_min..c_max {
-            let (local_c, dst_c) = (c - origin_x, c - win.col_start);
-            let dst_idx = dst_r * out_w + dst_c;
+            let local_c = c - origin_x;
+            let dst_idx = dst_row_base + (c - win.col_start);
 
             for (i, &band) in target_bands.iter().enumerate() {
                 if let Some(out_slice) = out_slices.get_mut(i) {
@@ -144,48 +146,78 @@ fn read_sample(
             .map(|v| v as f32)
             .unwrap_or(f32::NAN),
         (SampleFormat::Uint, 1) => {
-            let row_bytes = (w * if is_planar { 1 } else { samples }).div_ceil(8);
-            let s_in_row = if is_planar { c } else { c * samples + band };
-            let bit = raw
-                .get(r * row_bytes + s_in_row / 8)
-                .map(|&b| (b >> (7 - (s_in_row % 8))) & 1)
-                .unwrap_or(0);
-            if is_white_zero {
-                if bit == 0 { 1.0 } else { 0.0 }
-            } else {
-                bit as f32
-            }
+            read_bit(raw, w, samples, is_planar, (r, c, band), is_white_zero)
         }
-        (SampleFormat::Uint, 4) => {
-            let row_bytes = (w * if is_planar { 1 } else { samples }).div_ceil(2);
-            let s_in_row = if is_planar { c } else { c * samples + band };
-            let byte = raw.get(r * row_bytes + s_in_row / 2).copied().unwrap_or(0);
-            let nibble = if s_in_row % 2 == 0 {
-                byte >> 4
-            } else {
-                byte & 0x0F
-            };
-            nibble as f32
-        }
-        (SampleFormat::Uint, 12) => {
-            let row_bytes = ((w * if is_planar { 1 } else { samples }) * 12).div_ceil(8);
-            let s_in_row = if is_planar { c } else { c * samples + band };
-            let byte_idx = r * row_bytes + (s_in_row / 2) * 3;
-            if s_in_row % 2 == 0 {
-                let (b0, b1) = (
-                    raw.get(byte_idx).copied().unwrap_or(0) as u16,
-                    raw.get(byte_idx + 1).copied().unwrap_or(0) as u16,
-                );
-                ((b0 << 4) | (b1 >> 4)) as f32
-            } else {
-                let (b1, b2) = (
-                    raw.get(byte_idx + 1).copied().unwrap_or(0) as u16,
-                    raw.get(byte_idx + 2).copied().unwrap_or(0) as u16,
-                );
-                (((b1 & 0x0F) << 8) | b2) as f32
-            }
-        }
+        (SampleFormat::Uint, 4) => read_nibble(raw, w, samples, is_planar, (r, c, band)),
+        (SampleFormat::Uint, 12) => read_12bit(raw, w, samples, is_planar, (r, c, band)),
         _ => raw.get(idx).map(|&b| b as f32).unwrap_or(f32::NAN),
+    }
+}
+
+#[inline(always)]
+fn read_bit(
+    raw: &[u8],
+    w: usize,
+    samples: usize,
+    is_planar: bool,
+    (r, c, band): (usize, usize, usize),
+    is_white_zero: bool,
+) -> f32 {
+    let row_bytes = (w * if is_planar { 1 } else { samples }).div_ceil(8);
+    let s_in_row = if is_planar { c } else { c * samples + band };
+    let bit = raw
+        .get(r * row_bytes + s_in_row / 8)
+        .map(|&b| (b >> (7 - (s_in_row % 8))) & 1)
+        .unwrap_or(0);
+    if is_white_zero {
+        if bit == 0 { 1.0 } else { 0.0 }
+    } else {
+        bit as f32
+    }
+}
+
+#[inline(always)]
+fn read_nibble(
+    raw: &[u8],
+    w: usize,
+    samples: usize,
+    is_planar: bool,
+    (r, c, band): (usize, usize, usize),
+) -> f32 {
+    let row_bytes = (w * if is_planar { 1 } else { samples }).div_ceil(2);
+    let s_in_row = if is_planar { c } else { c * samples + band };
+    let byte = raw.get(r * row_bytes + s_in_row / 2).copied().unwrap_or(0);
+    let nibble = if s_in_row % 2 == 0 {
+        byte >> 4
+    } else {
+        byte & 0x0F
+    };
+    nibble as f32
+}
+
+#[inline(always)]
+fn read_12bit(
+    raw: &[u8],
+    w: usize,
+    samples: usize,
+    is_planar: bool,
+    (r, c, band): (usize, usize, usize),
+) -> f32 {
+    let row_bytes = ((w * if is_planar { 1 } else { samples }) * 12).div_ceil(8);
+    let s_in_row = if is_planar { c } else { c * samples + band };
+    let byte_idx = r * row_bytes + (s_in_row / 2) * 3;
+    if s_in_row % 2 == 0 {
+        let (b0, b1) = (
+            raw.get(byte_idx).copied().unwrap_or(0) as u16,
+            raw.get(byte_idx + 1).copied().unwrap_or(0) as u16,
+        );
+        ((b0 << 4) | (b1 >> 4)) as f32
+    } else {
+        let (b1, b2) = (
+            raw.get(byte_idx + 1).copied().unwrap_or(0) as u16,
+            raw.get(byte_idx + 2).copied().unwrap_or(0) as u16,
+        );
+        (((b1 & 0x0F) << 8) | b2) as f32
     }
 }
 
