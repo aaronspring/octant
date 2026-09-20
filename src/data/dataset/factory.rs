@@ -42,9 +42,11 @@ impl SourceFactory {
             DataSourceKind::NetCdf => Arc::new(NetCdfBlockStore::open_local(&source.uri)?),
 
             #[cfg(not(target_arch = "wasm32"))]
-            DataSourceKind::GeoTiff => Arc::new(GeoTiffBlockStore::open(&source.uri)?),
+            DataSourceKind::LocalGeoTiff | DataSourceKind::RemoteGeoTiff => {
+                Arc::new(GeoTiffBlockStore::open(&source.uri)?)
+            }
             #[cfg(target_arch = "wasm32")]
-            DataSourceKind::GeoTiff => {
+            DataSourceKind::LocalGeoTiff | DataSourceKind::RemoteGeoTiff => {
                 crate::data::backends::geotiff::WasmGeoTiffBlockStore::get_or_create(&source.uri)
             }
 

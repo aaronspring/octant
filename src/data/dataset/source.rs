@@ -13,8 +13,10 @@ pub enum DataSourceKind {
 
     Procedural,
 
+    LocalGeoTiff,
+    RemoteGeoTiff,
+
     NetCdf,
-    GeoTiff,
 
     /// Reserved for future readers.
     Other(String),

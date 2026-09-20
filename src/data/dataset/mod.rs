@@ -5,6 +5,8 @@ pub mod handle;
 pub mod item;
 pub mod manager;
 pub mod source;
+#[cfg(test)]
+mod tests;
 
 pub use factory::SourceFactory;
 pub use handle::StoreHandle;
