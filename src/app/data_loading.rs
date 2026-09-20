@@ -141,7 +141,10 @@ impl OctantApp {
             let source = crate::data::DataSource::new(&source_id, kind, &target_input, "Store");
 
             let res = crate::data::SourceFactory::open(source)
-                .and_then(|store| store.inspect())
+                .and_then(|handle| {
+                    let meta = handle.inspect()?;
+                    Ok((meta, handle))
+                })
                 .map_err(|e| e.to_string());
 
             if let Err(err) = &res {
@@ -155,31 +158,52 @@ impl OctantApp {
         {
             let target_clone = target_input.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let res = match store_kind {
-                    StoreKind::RemoteZarr => {
-                        crate::data::backends::zarr::inspect_wasm_remote_zarr(&target_clone).await
-                    }
-                    StoreKind::RemoteIcechunk => {
-                        crate::data::backends::icechunk::wasm::inspect_wasm_remote_icechunk(&target_clone).await
-                    }
-                    StoreKind::RemoteGeoTiff => {
-                        crate::data::backends::geotiff::wasm::inspect_wasm_remote_geotiff(&target_clone).await
-                    }
-                    StoreKind::LocalZarr
-                    | StoreKind::LocalIcechunk
-                    | StoreKind::LocalGeoTiff
-                    | StoreKind::LocalNetCdf => {
-                        Err("Direct local file paths cannot be read in a browser due to web sandbox security.\n\nTo view local datasets in the browser:\n1. Serve your directory or file with a local HTTP server: `npx serve` or `python3 -m http.server`\n2. Enter the URL: `http://localhost:8000/my_dataset`\n\nOr run the native desktop version of Octant (`cargo run --release`).".to_string())
-                    }
-                    _ => {
-                        let kind = store_kind.to_data_source_kind();
-                        let source_id = StoreKind::make_source_id(store_kind, &target_clone);
-                        let source = crate::data::DataSource::new(&source_id, kind, &target_clone, "Store");
-                        crate::data::SourceFactory::open(source)
-                            .and_then(|store| store.inspect())
-                            .map_err(|e| e.to_string())
-                    }
-                };
+                let kind = store_kind.to_data_source_kind();
+                let source_id = StoreKind::make_source_id(store_kind, &target_clone);
+                let source = crate::data::DataSource::new(&source_id, kind, &target_clone, "Store");
+
+                let res: Result<(crate::data::DatasetMetadata, crate::data::StoreHandle), String> =
+                    match store_kind {
+                        StoreKind::RemoteZarr => {
+                            let meta = crate::data::backends::zarr::inspect_wasm_remote_zarr(
+                                &target_clone,
+                            )
+                            .await?;
+                            let handle = crate::data::SourceFactory::open(source)
+                                .map_err(|e| e.to_string())?;
+                            Ok((meta, handle))
+                        }
+                        StoreKind::RemoteIcechunk => {
+                            let meta = crate::data::backends::icechunk::wasm::inspect_wasm_remote_icechunk(
+                                &target_clone,
+                            )
+                            .await?;
+                            let handle = crate::data::SourceFactory::open(source)
+                                .map_err(|e| e.to_string())?;
+                            Ok((meta, handle))
+                        }
+                        StoreKind::RemoteGeoTiff => {
+                            let meta = crate::data::backends::geotiff::wasm::inspect_wasm_remote_geotiff(
+                                &target_clone,
+                            )
+                            .await?;
+                            let handle = crate::data::SourceFactory::open(source)
+                                .map_err(|e| e.to_string())?;
+                            Ok((meta, handle))
+                        }
+                        StoreKind::LocalZarr
+                        | StoreKind::LocalIcechunk
+                        | StoreKind::LocalGeoTiff
+                        | StoreKind::LocalNetCdf => {
+                            Err("Direct local file paths cannot be read in a browser due to web sandbox security.\n\nTo view local datasets in the browser:\n1. Serve your directory or file with a local HTTP server: `npx serve` or `python3 -m http.server`\n2. Enter the URL: `http://localhost:8000/my_dataset`\n\nOr run the native desktop version of Octant (`cargo run --release`).".to_string())
+                        }
+                        _ => {
+                            let handle = crate::data::SourceFactory::open(source)
+                                .map_err(|e| e.to_string())?;
+                            let meta = handle.inspect().map_err(|e| e.to_string())?;
+                            Ok((meta, handle))
+                        }
+                    };
 
                 if let Err(err) = &res {
                     log::error!("Store inspect failed for '{target_clone}': {err}");

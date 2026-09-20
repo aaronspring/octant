@@ -281,7 +281,9 @@ pub struct OctantApp {
     pub prefetch_threads: usize,
 
     // Animation & Playback Controls
-    pub metadata_rx: Option<std::sync::mpsc::Receiver<Result<DatasetMetadata, String>>>,
+    pub metadata_rx: Option<
+        std::sync::mpsc::Receiver<Result<(DatasetMetadata, crate::data::StoreHandle), String>>,
+    >,
     pub is_playing: bool,
     pub playback_fps: f32,
     pub loop_playback: bool,
