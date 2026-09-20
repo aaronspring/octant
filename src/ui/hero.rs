@@ -327,9 +327,9 @@ fn intake_row(ui: &mut egui::Ui, app: &mut OctantApp) {
                 let hint_text = if intake_w < 310.0 {
                     "URL or path..."
                 } else if intake_w < 400.0 {
-                    "https://... or path (.zarr, .nc)..."
+                    "https://... or path (.zarr, .nc, .tiff, ...)"
                 } else {
-                    "https://... or path (.zarr, .icechunk, .nc, .h5)..."
+                    "https://... or path (.zarr, .icechunk, .nc, .h5, .tiff, ...)"
                 };
 
                 let desired_w = (ui.available_width() - right_reserve).max(30.0);
