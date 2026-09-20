@@ -20,50 +20,40 @@ pub fn inspect_tiff(tiff: &TIFF, source_name: &str) -> DatasetMetadata {
         } else {
             format!("overview_{ifd_idx}/")
         };
-
-        let width = ifd.image_width() as u64;
-        let height = ifd.image_height() as u64;
-        let samples = ifd.samples_per_pixel() as u64;
+        let (width, height, samples) = (
+            ifd.image_width() as u64,
+            ifd.image_height() as u64,
+            ifd.samples_per_pixel() as u64,
+        );
         let data_type_str = extract_data_type_name(ifd);
         let attributes = extract_ifd_attributes(ifd);
         let chunk_shape = extract_chunk_shape(ifd, width, height);
-
         let geo_bounds = GeoSpatialBounds::from_ifd(ifd);
         let photometric = ifd.photometric_interpretation();
         let is_palette =
             photometric == PhotometricInterpretation::RGBPalette && ifd.colormap().is_some();
-
         let num_bands = if is_palette { 3 } else { samples };
-
-        let mut chunk_3d = Vec::with_capacity(3);
-        chunk_3d.push(1);
-        chunk_3d.extend_from_slice(&chunk_shape);
-
         let is_cmyk = photometric == PhotometricInterpretation::CMYK;
 
-        // Multi-band raster dataset if 2+ bands
         if num_bands > 1 {
             let raster_name = format!("{prefix}raster");
             geo_bounds.populate_dimension_coordinates(&raster_name, &mut dimension_coordinates);
             variables.push(VariableInfo {
                 name: raster_name,
                 data_type: if is_palette {
-                    "float32".to_string()
+                    "float32".into()
                 } else {
                     data_type_str.clone()
                 },
                 shape: vec![num_bands, height, width],
-                dimension_names: vec!["band".to_string(), "y".to_string(), "x".to_string()],
-                chunk_shape: chunk_3d,
-                file_size: width
-                    .saturating_mul(height)
-                    .saturating_mul(num_bands)
-                    .saturating_mul(4),
+                dimension_names: vec!["band".into(), "y".into(), "x".into()],
+                chunk_shape: vec![1, chunk_shape[0], chunk_shape[1]],
+                file_size: width * height * num_bands * 4,
                 units: None,
                 long_name: Some(if is_cmyk {
-                    "CMYK raster".to_string()
+                    "CMYK raster".into()
                 } else {
-                    "Multi-band raster".to_string()
+                    "Multi-band raster".into()
                 }),
                 time_coverage_start: None,
                 time_coverage_end: None,
@@ -72,11 +62,10 @@ pub fn inspect_tiff(tiff: &TIFF, source_name: &str) -> DatasetMetadata {
             });
         }
 
-        // Individual band variables (band_1, band_2, ...)
         for band_idx in 0..samples {
             let var_name = if samples == 1 {
                 if prefix.is_empty() {
-                    "band_1".to_string()
+                    "band_1".into()
                 } else {
                     format!("{prefix}band_1")
                 }
@@ -85,15 +74,15 @@ pub fn inspect_tiff(tiff: &TIFF, source_name: &str) -> DatasetMetadata {
             };
 
             geo_bounds.populate_dimension_coordinates(&var_name, &mut dimension_coordinates);
-
             let band_long_name = if is_cmyk {
                 match band_idx {
-                    0 => "Cyan (C)".to_string(),
-                    1 => "Magenta (M)".to_string(),
-                    2 => "Yellow (Y)".to_string(),
-                    3 => "Black (K)".to_string(),
-                    _ => format!("Band {}", band_idx + 1),
+                    0 => "Cyan (C)",
+                    1 => "Magenta (M)",
+                    2 => "Yellow (Y)",
+                    3 => "Black (K)",
+                    _ => "Band",
                 }
+                .into()
             } else {
                 format!("Band {}", band_idx + 1)
             };
@@ -102,9 +91,9 @@ pub fn inspect_tiff(tiff: &TIFF, source_name: &str) -> DatasetMetadata {
                 name: var_name,
                 data_type: data_type_str.clone(),
                 shape: vec![height, width],
-                dimension_names: vec!["y".to_string(), "x".to_string()],
+                dimension_names: vec!["y".into(), "x".into()],
                 chunk_shape: chunk_shape.clone(),
-                file_size: width.saturating_mul(height).saturating_mul(4),
+                file_size: width * height * 4,
                 units: None,
                 long_name: Some(band_long_name),
                 time_coverage_start: None,
@@ -130,7 +119,6 @@ fn extract_data_type_name(ifd: &ImageFileDirectory) -> String {
         .copied()
         .unwrap_or(SampleFormat::Uint);
     let bits = ifd.bits_per_sample().first().copied().unwrap_or(8);
-
     match (fmt, bits) {
         (SampleFormat::Float, 16) => "float16",
         (SampleFormat::Float, 32) => "float32",
@@ -163,42 +151,40 @@ fn extract_chunk_shape(ifd: &ImageFileDirectory, width: u64, height: u64) -> Vec
 
 fn extract_ifd_attributes(ifd: &ImageFileDirectory) -> HashMap<String, String> {
     let mut attrs = HashMap::new();
-
     if let Some(nodata) = ifd.gdal_nodata() {
-        attrs.insert("_FillValue".to_string(), nodata.to_string());
-        attrs.insert("nodata".to_string(), nodata.to_string());
+        attrs.insert("_FillValue".into(), nodata.into());
+        attrs.insert("nodata".into(), nodata.into());
     }
     if let Some(desc) = ifd.image_description() {
-        attrs.insert("description".to_string(), desc.to_string());
+        attrs.insert("description".into(), desc.into());
     }
     if let Some(soft) = ifd.software() {
-        attrs.insert("software".to_string(), soft.to_string());
+        attrs.insert("software".into(), soft.into());
     }
     if let Some(dt) = ifd.date_time() {
-        attrs.insert("datetime".to_string(), dt.to_string());
+        attrs.insert("datetime".into(), dt.into());
     }
     if let Some(geo) = ifd.geo_key_directory() {
         if let Some(ref cit) = geo.citation {
-            attrs.insert("crs_citation".to_string(), cit.clone());
+            attrs.insert("crs_citation".into(), cit.clone());
         }
         if let Some(ref proj_cit) = geo.proj_citation {
-            attrs.insert("projection_citation".to_string(), proj_cit.clone());
+            attrs.insert("projection_citation".into(), proj_cit.clone());
         }
     }
     match ifd.photometric_interpretation() {
         PhotometricInterpretation::CMYK => {
-            attrs.insert("photometric".to_string(), "cmyk".to_string());
-            attrs.insert("color_space".to_string(), "cmyk".to_string());
+            attrs.insert("photometric".into(), "cmyk".into());
+            attrs.insert("color_space".into(), "cmyk".into());
         }
         PhotometricInterpretation::RGB => {
-            attrs.insert("photometric".to_string(), "rgb".to_string());
-            attrs.insert("color_space".to_string(), "rgb".to_string());
+            attrs.insert("photometric".into(), "rgb".into());
+            attrs.insert("color_space".into(), "rgb".into());
         }
         PhotometricInterpretation::RGBPalette => {
-            attrs.insert("photometric".to_string(), "palette".to_string());
+            attrs.insert("photometric".into(), "palette".into());
         }
         _ => {}
     }
-
     attrs
 }

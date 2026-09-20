@@ -25,7 +25,12 @@ pub fn unpredict_buffer(
     endianness: Endianness,
 ) -> Result<Vec<u8>, String> {
     if endianness == Endianness::BigEndian {
-        swap_endianness(&mut buf, bits);
+        match bits {
+            16 => buf.chunks_exact_mut(2).for_each(|c| c.swap(0, 1)),
+            32 => buf.chunks_exact_mut(4).for_each(|c| c.reverse()),
+            64 => buf.chunks_exact_mut(8).for_each(|c| c.reverse()),
+            _ => {}
+        }
     }
     match predictor {
         Predictor::Horizontal => unpredict_horizontal(&mut buf, samples, bits, width)?,
@@ -33,27 +38,6 @@ pub fn unpredict_buffer(
         _ => {}
     }
     Ok(buf)
-}
-
-fn swap_endianness(buf: &mut [u8], bits: u16) {
-    match bits {
-        16 => {
-            for c in buf.chunks_exact_mut(2) {
-                c.swap(0, 1);
-            }
-        }
-        32 => {
-            for c in buf.chunks_exact_mut(4) {
-                c.reverse();
-            }
-        }
-        64 => {
-            for c in buf.chunks_exact_mut(8) {
-                c.reverse();
-            }
-        }
-        _ => {}
-    }
 }
 
 fn unpredict_horizontal(
@@ -78,10 +62,10 @@ fn unpredict_horizontal(
                 let step = samples * 2;
                 for i in (step..row.len()).step_by(2) {
                     let prev = u16::from_ne_bytes([row[i - step], row[i - step + 1]]);
-                    let curr = u16::from_ne_bytes([row[i], row[i + 1]]);
-                    let sum = curr.wrapping_add(prev).to_ne_bytes();
-                    row[i] = sum[0];
-                    row[i + 1] = sum[1];
+                    let sum = u16::from_ne_bytes([row[i], row[i + 1]])
+                        .wrapping_add(prev)
+                        .to_ne_bytes();
+                    row[i..i + 2].copy_from_slice(&sum);
                 }
             }
             17..=32 => {
@@ -90,8 +74,9 @@ fn unpredict_horizontal(
                     let prev = u32::from_ne_bytes(
                         row[i - step..i - step + 4].try_into().unwrap_or_default(),
                     );
-                    let curr = u32::from_ne_bytes(row[i..i + 4].try_into().unwrap_or_default());
-                    let sum = curr.wrapping_add(prev).to_ne_bytes();
+                    let sum = u32::from_ne_bytes(row[i..i + 4].try_into().unwrap_or_default())
+                        .wrapping_add(prev)
+                        .to_ne_bytes();
                     row[i..i + 4].copy_from_slice(&sum);
                 }
             }
@@ -101,8 +86,9 @@ fn unpredict_horizontal(
                     let prev = u64::from_ne_bytes(
                         row[i - step..i - step + 8].try_into().unwrap_or_default(),
                     );
-                    let curr = u64::from_ne_bytes(row[i..i + 8].try_into().unwrap_or_default());
-                    let sum = curr.wrapping_add(prev).to_ne_bytes();
+                    let sum = u64::from_ne_bytes(row[i..i + 8].try_into().unwrap_or_default())
+                        .wrapping_add(prev)
+                        .to_ne_bytes();
                     row[i..i + 8].copy_from_slice(&sum);
                 }
             }
@@ -135,27 +121,28 @@ fn unpredict_float(
         match bytes_per_sample {
             2 => {
                 for (i, chunk) in out_row.chunks_exact_mut(2).enumerate() {
-                    let b = u16::from_be_bytes([in_row[i], in_row[plane_len + i]]).to_ne_bytes();
-                    chunk.copy_from_slice(&b);
+                    chunk.copy_from_slice(
+                        &u16::from_be_bytes([in_row[i], in_row[plane_len + i]]).to_ne_bytes(),
+                    );
                 }
             }
             4 => {
                 for (i, chunk) in out_row.chunks_exact_mut(4).enumerate() {
-                    let b = u32::from_be_bytes([
-                        in_row[i],
-                        in_row[plane_len + i],
-                        in_row[plane_len * 2 + i],
-                        in_row[plane_len * 3 + i],
-                    ])
-                    .to_ne_bytes();
-                    chunk.copy_from_slice(&b);
+                    chunk.copy_from_slice(
+                        &u32::from_be_bytes([
+                            in_row[i],
+                            in_row[plane_len + i],
+                            in_row[plane_len * 2 + i],
+                            in_row[plane_len * 3 + i],
+                        ])
+                        .to_ne_bytes(),
+                    );
                 }
             }
             8 => {
                 for (i, chunk) in out_row.chunks_exact_mut(8).enumerate() {
                     let arr: [u8; 8] = std::array::from_fn(|idx| in_row[plane_len * idx + i]);
-                    let b = u64::from_be_bytes(arr).to_ne_bytes();
-                    chunk.copy_from_slice(&b);
+                    chunk.copy_from_slice(&u64::from_be_bytes(arr).to_ne_bytes());
                 }
             }
             _ => return Err(format!("Unsupported float predictor bits: {bits}")),
@@ -164,21 +151,20 @@ fn unpredict_float(
     Ok(output)
 }
 
-/// A decoder for the PackBits compression method.
 #[derive(Debug, Clone)]
 pub struct PackBitsDecoder;
 
 impl Decoder for PackBitsDecoder {
     fn decode_tile(
         &self,
-        buffer: Bytes,
-        _photo: PhotometricInterpretation,
-        _tables: Option<&[u8]>,
-        _samples: u16,
-        _bits: u16,
-        _lerc: Option<&[u32]>,
+        buf: Bytes,
+        _p: PhotometricInterpretation,
+        _t: Option<&[u8]>,
+        _s: u16,
+        _b: u16,
+        _l: Option<&[u32]>,
     ) -> AsyncTiffResult<Vec<u8>> {
-        let input = buffer.as_ref();
+        let input = buf.as_ref();
         let mut out = Vec::with_capacity(input.len() * 2);
         let mut i = 0;
         while i < input.len() {
@@ -196,86 +182,82 @@ impl Decoder for PackBitsDecoder {
                 if i >= input.len() {
                     return Err(AsyncTiffError::General("PackBits byte missing".into()));
                 }
-                let byte = input[i];
+                out.resize(out.len() + count, input[i]);
                 i += 1;
-                out.resize(out.len() + count, byte);
             }
         }
         Ok(out)
     }
 }
 
-/// A robust LZW decoder with TIFF size switch and LSB compat fallbacks.
 #[derive(Debug, Clone)]
 pub struct RobustLzwDecoder;
 
 impl Decoder for RobustLzwDecoder {
     fn decode_tile(
         &self,
-        buffer: Bytes,
-        _photo: PhotometricInterpretation,
-        _tables: Option<&[u8]>,
-        _samples: u16,
-        _bits: u16,
-        _lerc: Option<&[u32]>,
+        buf: Bytes,
+        _p: PhotometricInterpretation,
+        _t: Option<&[u8]>,
+        _s: u16,
+        _b: u16,
+        _l: Option<&[u32]>,
     ) -> AsyncTiffResult<Vec<u8>> {
-        let input = buffer.as_ref();
-        let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
-        if let Ok(data) = decoder.decode(input) {
+        let input = buf.as_ref();
+        if let Ok(data) =
+            weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8).decode(input)
+        {
             return Ok(data);
         }
-        let mut compat = weezl::decode::Decoder::new(weezl::BitOrder::Msb, 8);
-        if let Ok(data) = compat.decode(input) {
+        if let Ok(data) = weezl::decode::Decoder::new(weezl::BitOrder::Msb, 8).decode(input) {
             return Ok(data);
         }
-        let mut lsb = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Lsb, 8);
-        if let Ok(data) = lsb.decode(input) {
+        if let Ok(data) =
+            weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Lsb, 8).decode(input)
+        {
             return Ok(data);
         }
-        let mut lsb_std = weezl::decode::Decoder::new(weezl::BitOrder::Lsb, 8);
-        lsb_std
+        weezl::decode::Decoder::new(weezl::BitOrder::Lsb, 8)
             .decode(input)
             .map_err(|e| AsyncTiffError::General(format!("LZW decompression failed: {e:?}")))
     }
 }
 
-/// A JPEG decoder combining JPEGTables with tile payload.
 #[derive(Debug, Clone)]
 pub struct JpegDecoder;
 
 impl Decoder for JpegDecoder {
     fn decode_tile(
         &self,
-        buffer: Bytes,
-        _photo: PhotometricInterpretation,
-        jpeg_tables: Option<&[u8]>,
-        _samples: u16,
-        _bits: u16,
-        _lerc: Option<&[u32]>,
+        buf: Bytes,
+        _p: PhotometricInterpretation,
+        tables: Option<&[u8]>,
+        _s: u16,
+        _b: u16,
+        _l: Option<&[u32]>,
     ) -> AsyncTiffResult<Vec<u8>> {
-        let input = buffer.as_ref();
-        let combined = if let Some(tables) = jpeg_tables
-            && tables.len() >= 4
+        let input = buf.as_ref();
+        let combined = if let Some(t) = tables
+            && t.len() >= 4
             && input.len() >= 2
         {
-            let mut c = Vec::with_capacity(tables.len() + input.len());
-            let tables_payload = if tables.ends_with(&[0xFF, 0xD9]) {
-                &tables[..tables.len() - 2]
+            let mut c = Vec::with_capacity(t.len() + input.len());
+            let t_body = if t.ends_with(&[0xFF, 0xD9]) {
+                &t[..t.len() - 2]
             } else {
-                tables
+                t
             };
-            let input_payload = if input.starts_with(&[0xFF, 0xD8]) {
+            let in_body = if input.starts_with(&[0xFF, 0xD8]) {
                 &input[2..]
             } else {
                 input
             };
-            c.extend_from_slice(tables_payload);
-            c.extend_from_slice(input_payload);
+            c.extend_from_slice(t_body);
+            c.extend_from_slice(in_body);
             c
         } else {
             input.to_vec()
         };
-
         let img = image::load_from_memory_with_format(&combined, image::ImageFormat::Jpeg)
             .map_err(|e| AsyncTiffError::General(format!("JPEG decode failed: {e}")))?;
         Ok(img.to_rgb8().into_raw())

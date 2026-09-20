@@ -4,14 +4,12 @@ use std::fmt::Debug;
 use std::ops::Range;
 use std::sync::Arc;
 
-#[cfg(target_arch = "wasm32")]
-use async_tiff::error::AsyncTiffError;
 use async_tiff::error::AsyncTiffResult;
 use async_tiff::reader::AsyncFileReader;
 use async_trait::async_trait;
 use bytes::Bytes;
 
-/// In-memory async reader for TIFF byte buffers (useful for testing and drag-and-drop bytes).
+/// In-memory async reader for TIFF byte buffers.
 #[derive(Debug, Clone)]
 pub struct MemoryTiffReader {
     data: Bytes,
@@ -36,7 +34,7 @@ impl AsyncFileReader for MemoryTiffReader {
     }
 }
 
-/// Robust Tokio async file reader that pre-allocates buffer space for range reads.
+/// Robust Tokio async file reader pre-allocating buffer space.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct TokioFileReader {
@@ -58,26 +56,24 @@ impl AsyncFileReader for TokioFileReader {
     async fn get_bytes(&self, range: Range<u64>) -> AsyncTiffResult<Bytes> {
         use std::io::SeekFrom;
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
         let mut file = self.file.lock().await;
         file.seek(SeekFrom::Start(range.start)).await?;
-
         let to_read = (range.end.saturating_sub(range.start)) as usize;
         let mut buffer = vec![0u8; to_read];
-        let mut total_read = 0;
-        while total_read < to_read {
-            let n = file.read(&mut buffer[total_read..]).await?;
+        let mut total = 0;
+        while total < to_read {
+            let n = file.read(&mut buffer[total..]).await?;
             if n == 0 {
                 break;
             }
-            total_read += n;
+            total += n;
         }
-        buffer.truncate(total_read);
+        buffer.truncate(total);
         Ok(Bytes::from(buffer))
     }
 }
 
-/// WASM HTTP byte range reader backed by browser `window.fetch`.
+/// WASM HTTP byte range reader.
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone)]
 pub struct WasmHttpTiffReader {
@@ -98,7 +94,7 @@ impl AsyncFileReader for WasmHttpTiffReader {
         let len = range.end.saturating_sub(range.start);
         let bytes = crate::data::backends::http::fetch_url_byte_range(&self.url, range.start, len)
             .await
-            .map_err(|e| AsyncTiffError::General(e))?;
+            .map_err(async_tiff::error::AsyncTiffError::General)?;
         Ok(Bytes::from(bytes))
     }
 }
@@ -108,42 +104,32 @@ pub async fn create_async_reader(
     uri: &str,
 ) -> Result<Arc<dyn AsyncFileReader>, crate::data::blocks::BlockStoreError> {
     let clean = uri.trim();
-
     #[cfg(not(target_arch = "wasm32"))]
     {
         if clean.starts_with("http://") || clean.starts_with("https://") {
-            let parsed_url =
+            let parsed =
                 reqwest::Url::parse(clean).map_err(|e| format!("Invalid URL '{clean}': {e}"))?;
             let client = reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap_or_default();
-            let reader = async_tiff::reader::ReqwestReader::new(client, parsed_url);
-            Ok(Arc::new(reader))
+            Ok(Arc::new(async_tiff::reader::ReqwestReader::new(
+                client, parsed,
+            )))
         } else {
-            let file_path = if let Some(stripped) = clean.strip_prefix("file://") {
-                stripped
-            } else {
-                clean
-            };
-            let file = tokio::fs::File::open(file_path)
+            let path = clean.strip_prefix("file://").unwrap_or(clean);
+            let file = tokio::fs::File::open(path)
                 .await
-                .map_err(|e| format!("Failed to open TIFF file at '{file_path}': {e}"))?;
-            let reader = TokioFileReader::new(file);
-            Ok(Arc::new(reader))
+                .map_err(|e| format!("Failed to open TIFF at '{path}': {e}"))?;
+            Ok(Arc::new(TokioFileReader::new(file)))
         }
     }
-
     #[cfg(target_arch = "wasm32")]
     {
         if clean.starts_with("http://") || clean.starts_with("https://") {
             Ok(Arc::new(WasmHttpTiffReader::new(clean)))
         } else {
-            Err(
-                format!("Local filesystem paths are not supported directly in WASM: {clean}")
-                    .into(),
-            )
+            Err(format!("Local filesystem paths unsupported on WASM: {clean}").into())
         }
     }
 }

@@ -27,12 +27,9 @@ pub struct GeoTiffBlockStore {
 }
 
 impl GeoTiffBlockStore {
-    /// Return the original URI or name used to open this store.
     pub fn uri(&self) -> &str {
         &self.uri
     }
-
-    /// Access the underlying parsed TIFF metadata.
     pub fn tiff(&self) -> &TIFF {
         &self.tiff
     }
@@ -42,8 +39,8 @@ impl GeoTiffBlockStore {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let rt = crate::utils::executor::get_shared_tokio_rt();
-            let uri_str = uri.to_string();
-            rt.block_on(async move { Self::open_async(&uri_str).await })
+            let u = uri.to_string();
+            rt.block_on(async move { Self::open_async(&u).await })
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -74,26 +71,22 @@ impl GeoTiffBlockStore {
         name: &str,
         reader: Arc<dyn AsyncFileReader>,
     ) -> Result<Self, BlockStoreError> {
-        let cached_reader = ReadaheadMetadataCache::new(reader.clone());
-        let mut metadata_reader = TiffMetadataReader::try_open(&cached_reader)
+        let cached = ReadaheadMetadataCache::new(reader.clone());
+        let mut meta_reader = TiffMetadataReader::try_open(&cached)
             .await
             .map_err(|e| format!("Failed to read TIFF header for '{name}': {e}"))?;
-
-        let ifds = metadata_reader
-            .read_all_ifds(&cached_reader)
+        let ifds = meta_reader
+            .read_all_ifds(&cached)
             .await
             .map_err(|e| format!("Failed to read IFD metadata for '{name}': {e}"))?;
-
         if ifds.is_empty() {
-            return Err(format!("TIFF '{name}' contains no image file directories (IFDs)").into());
+            return Err(format!("TIFF '{name}' contains no IFDs").into());
         }
-
-        let tiff = TIFF::new(ifds, metadata_reader.endianness());
+        let tiff = TIFF::new(ifds, meta_reader.endianness());
         let metadata = inspect_tiff(&tiff, name);
         let decoder_registry = Arc::new(super::decode::create_decoder_registry());
-
         Ok(Self {
-            uri: name.to_string(),
+            uri: name.into(),
             reader,
             tiff,
             metadata,
@@ -101,15 +94,15 @@ impl GeoTiffBlockStore {
         })
     }
 
-    fn resolve_ifd_for_variable(&self, var_name: &str) -> Option<&async_tiff::ImageFileDirectory> {
-        if var_name.starts_with("overview_") {
-            let ifd_idx = var_name
+    fn resolve_ifd(&self, var: &str) -> Option<&async_tiff::ImageFileDirectory> {
+        if var.starts_with("overview_") {
+            let idx = var
                 .strip_prefix("overview_")?
                 .split('/')
                 .next()?
                 .parse::<usize>()
                 .ok()?;
-            self.tiff.ifds().get(ifd_idx)
+            self.tiff.ifds().get(idx)
         } else {
             self.tiff.ifds().first()
         }
@@ -120,7 +113,6 @@ impl BlockStore for GeoTiffBlockStore {
     fn backend_name(&self) -> &str {
         "GeoTIFF"
     }
-
     fn variables(&self) -> Result<Vec<String>, BlockStoreError> {
         Ok(self
             .metadata
@@ -129,20 +121,18 @@ impl BlockStore for GeoTiffBlockStore {
             .map(|v| v.name.clone())
             .collect())
     }
-
     fn inspect(&self) -> Result<DatasetMetadata, BlockStoreError> {
         Ok(self.metadata.clone())
     }
 
     fn fetch_block_with_progress(
         &self,
-        request: &SliceRequest,
+        req: &SliceRequest,
         _on_progress: ProgressCallback,
     ) -> Result<OctantBlock, BlockStoreError> {
         let ifd = self
-            .resolve_ifd_for_variable(&request.variable)
-            .ok_or_else(|| format!("Variable '{}' not found in TIFF", request.variable))?;
-
+            .resolve_ifd(&req.variable)
+            .ok_or_else(|| format!("Variable '{}' not found in TIFF", req.variable))?;
         #[cfg(not(target_arch = "wasm32"))]
         {
             let rt = crate::utils::executor::get_shared_tokio_rt();
@@ -150,21 +140,20 @@ impl BlockStore for GeoTiffBlockStore {
                 fetch_geotiff_block(
                     ifd,
                     self.tiff.endianness(),
-                    request,
+                    req,
                     self.reader.as_ref(),
                     &self.decoder_registry,
                 )
                 .await
             })
         }
-
         #[cfg(target_arch = "wasm32")]
         {
             futures::executor::block_on(async {
                 fetch_geotiff_block(
                     ifd,
                     self.tiff.endianness(),
-                    request,
+                    req,
                     self.reader.as_ref(),
                     &self.decoder_registry,
                 )
@@ -174,10 +163,10 @@ impl BlockStore for GeoTiffBlockStore {
     }
 
     fn fetch_blocks(&self, requests: &[SliceRequest]) -> Result<BlockResult, BlockStoreError> {
-        let mut blocks = Vec::with_capacity(requests.len());
-        for req in requests {
-            blocks.push(self.fetch_block(req)?);
-        }
+        let blocks = requests
+            .iter()
+            .map(|r| self.fetch_block(r))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(BlockResult::new(blocks))
     }
 }
