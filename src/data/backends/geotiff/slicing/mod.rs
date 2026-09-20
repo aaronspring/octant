@@ -32,7 +32,9 @@ pub async fn fetch_geotiff_block(
     let parsed = parse_slice_request(request, ifd);
     let out_h = parsed.row_end.saturating_sub(parsed.row_start).max(1);
     let out_w = parsed.col_end.saturating_sub(parsed.col_start).max(1);
-    let plane_len = out_h * out_w;
+    let plane_len = out_h
+        .checked_mul(out_w)
+        .ok_or_else(|| BlockStoreError::from("Hyperslab shape arithmetic overflow"))?;
     let window = ReadWindow {
         row_start: parsed.row_start,
         row_end: parsed.row_end,
@@ -57,7 +59,10 @@ pub async fn fetch_geotiff_block(
     };
 
     let total_bands = target_bands.len();
-    let mut buffer = vec![f32::NAN; total_bands * plane_len];
+    let total_samples = total_bands
+        .checked_mul(plane_len)
+        .ok_or_else(|| BlockStoreError::from("Total sample buffer size overflow"))?;
+    let mut buffer = vec![f32::NAN; total_samples];
 
     if is_palette && let Some(cmap) = colormap {
         let mut idx_buf = vec![f32::NAN; plane_len];
