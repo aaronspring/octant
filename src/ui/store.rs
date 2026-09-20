@@ -28,8 +28,9 @@ pub fn show_left_panel(app: &mut OctantApp, ui: &mut egui::Ui) {
                         StoreKind::LocalZarr => "Local Zarr",
                         StoreKind::RemoteIcechunk => "Remote Icechunk",
                         StoreKind::LocalIcechunk => "Local Icechunk",
+                        StoreKind::RemoteGeoTiff => "Remote GeoTIFF / COG",
+                        StoreKind::LocalGeoTiff => "Local GeoTIFF",
                         StoreKind::LocalNetCdf => "Local NetCDF / HDF5",
-                        StoreKind::LocalGeoTiff => "GeoTIFF / TIFF (.tif/.tiff/.cog)",
                         StoreKind::ProceduralVolume4D => "4D Known-Truth Volume",
                         StoreKind::ProceduralRandom => "2D Procedural Matrix",
                     })
@@ -38,8 +39,9 @@ pub fn show_left_panel(app: &mut OctantApp, ui: &mut egui::Ui) {
                         ui.selectable_value(&mut selected, StoreKind::LocalZarr, "Local Zarr (FileSystem)");
                         ui.selectable_value(&mut selected, StoreKind::RemoteIcechunk, "Remote Icechunk (HTTP/S3)");
                         ui.selectable_value(&mut selected, StoreKind::LocalIcechunk, "Local Icechunk (FileSystem)");
+                        ui.selectable_value(&mut selected, StoreKind::RemoteGeoTiff, "Remote GeoTIFF / COG (HTTP/S3)");
+                        ui.selectable_value(&mut selected, StoreKind::LocalGeoTiff, "Local GeoTIFF (.tif/.tiff/.cog)");
                         ui.selectable_value(&mut selected, StoreKind::LocalNetCdf, "Local NetCDF / HDF5 (.nc/.h5/.hdf5)");
-                        ui.selectable_value(&mut selected, StoreKind::LocalGeoTiff, "GeoTIFF / TIFF (.tif/.tiff/.cog)");
                         ui.separator();
                         ui.selectable_value(&mut selected, StoreKind::ProceduralVolume4D, "4D Known-Truth Volume (Procedural)");
                         ui.selectable_value(&mut selected, StoreKind::ProceduralRandom, "2D Procedural Matrix (Test)");
@@ -60,11 +62,14 @@ pub fn show_left_panel(app: &mut OctantApp, ui: &mut egui::Ui) {
                         StoreKind::LocalIcechunk => {
                             app.store_target_input = "./data/icechunk_repo".to_string();
                         }
-                        StoreKind::LocalNetCdf => {
-                            app.store_target_input = "./data/sample.nc".to_string();
+                        StoreKind::RemoteGeoTiff => {
+                            app.store_target_input = "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/36/Q/WD/2020/7/S2A_36QWD_20200701_0_L2A/TCI.tif".to_string();
                         }
                         StoreKind::LocalGeoTiff => {
                             app.store_target_input = "./data/sample.tif".to_string();
+                        }
+                        StoreKind::LocalNetCdf => {
+                            app.store_target_input = "./data/sample.nc".to_string();
                         }
                         StoreKind::ProceduralVolume4D => {
                             app.submit_or_activate_source("procedural://volume4d", Some(StoreKind::ProceduralVolume4D));

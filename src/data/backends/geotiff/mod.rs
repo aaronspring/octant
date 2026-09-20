@@ -12,5 +12,7 @@ pub mod store;
 pub mod test_utils;
 #[cfg(test)]
 pub mod tests;
+pub mod wasm;
 
 pub use store::GeoTiffBlockStore;
+pub use wasm::WasmGeoTiffBlockStore;

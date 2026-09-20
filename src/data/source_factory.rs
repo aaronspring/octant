@@ -9,10 +9,9 @@ use super::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::backends::zarr::ZarrBlockStore;
+use super::backends::{geotiff::GeoTiffBlockStore, zarr::ZarrBlockStore};
 use super::backends::{
-    geotiff::GeoTiffBlockStore, icechunk::IcechunkBlockStore, netcdf::NetCdfBlockStore,
-    procedural::ProceduralBlockStore,
+    icechunk::IcechunkBlockStore, netcdf::NetCdfBlockStore, procedural::ProceduralBlockStore,
 };
 
 pub struct SourceFactory;
@@ -42,7 +41,12 @@ impl SourceFactory {
 
             DataSourceKind::NetCdf => Arc::new(NetCdfBlockStore::open_local(&source.uri)?),
 
+            #[cfg(not(target_arch = "wasm32"))]
             DataSourceKind::GeoTiff => Arc::new(GeoTiffBlockStore::open(&source.uri)?),
+            #[cfg(target_arch = "wasm32")]
+            DataSourceKind::GeoTiff => {
+                crate::data::backends::geotiff::WasmGeoTiffBlockStore::get_or_create(&source.uri)
+            }
 
             DataSourceKind::Other(kind) => {
                 if kind.to_lowercase().contains("procedural") {

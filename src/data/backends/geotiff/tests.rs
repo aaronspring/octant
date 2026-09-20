@@ -204,3 +204,20 @@ fn test_unpredict_horizontal_and_float() {
     .expect("unpredict none");
     assert_eq!(passthrough, bytes);
 }
+
+#[test]
+fn test_wasm_geotiff_store_behavior() {
+    use crate::data::backends::geotiff::WasmGeoTiffBlockStore;
+
+    let store = WasmGeoTiffBlockStore::get_or_create("https://example.com/test.tif");
+    assert_eq!(store.backend_name(), "GeoTIFF (Web COG)");
+    assert_eq!(store.variables().unwrap(), Vec::<String>::new());
+    // Initial state returns loading error
+    let inspect_err = store.inspect().unwrap_err();
+    assert!(
+        inspect_err
+            .to_string()
+            .contains("loading in the background")
+            || inspect_err.to_string().contains("Failed to load")
+    );
+}

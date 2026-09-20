@@ -61,6 +61,26 @@ pub fn infer_store_kind_from_target(target: &str) -> Result<crate::app::StoreKin
         {
             return Ok(StoreKind::RemoteIcechunk);
         }
+
+        // Check if remote URL points to a TIFF/GeoTIFF/COG or NetCDF file
+        let path_part = lower.split('?').next().unwrap_or(&lower);
+        if path_part.ends_with(".tif")
+            || path_part.ends_with(".tiff")
+            || path_part.ends_with(".geotif")
+            || path_part.ends_with(".geotiff")
+            || path_part.ends_with(".cog")
+        {
+            return Ok(StoreKind::RemoteGeoTiff);
+        }
+        if path_part.ends_with(".nc")
+            || path_part.ends_with(".nc4")
+            || path_part.ends_with(".netcdf")
+            || path_part.ends_with(".h5")
+            || path_part.ends_with(".hdf5")
+        {
+            return Ok(StoreKind::LocalNetCdf);
+        }
+
         return Ok(StoreKind::RemoteZarr);
     }
 
@@ -334,8 +354,22 @@ mod tests {
             Ok(StoreKind::LocalGeoTiff)
         );
         assert_eq!(
-            infer_store_kind_from_target("dev/async-tiff/tests/fixtures/geo-5b.tif"),
-            Ok(StoreKind::LocalGeoTiff)
+            infer_store_kind_from_target(
+                "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/36/Q/WD/2020/7/S2A_36QWD_20200701_0_L2A/TCI.tif"
+            ),
+            Ok(StoreKind::RemoteGeoTiff)
+        );
+        assert_eq!(
+            infer_store_kind_from_target("https://example.com/data/elevation.tif?download=1"),
+            Ok(StoreKind::RemoteGeoTiff)
+        );
+        assert_eq!(
+            infer_store_kind_from_target("s3://bucket/sentinel/raster.cog"),
+            Ok(StoreKind::RemoteGeoTiff)
+        );
+        assert_eq!(
+            infer_store_kind_from_target("https://example.com/model/output.nc"),
+            Ok(StoreKind::LocalNetCdf)
         );
 
         // Unsupported types

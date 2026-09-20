@@ -14,8 +14,26 @@ pub enum CatalogCategoryFilter {
     All,
     Zarr,
     Icechunk,
+    GeoTiff,
     Procedural,
 }
+
+pub static GEOTIFF_CATALOG: &[CatalogEntry] = &[
+    CatalogEntry {
+        key: "sentinel-2-tci",
+        label: "Sentinel-2 L2A True Color (TCI)",
+        subtitle: "Cloud-Optimized GeoTIFF 10m RGB surface reflectance on AWS S3",
+        store: "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/36/Q/WD/2020/7/S2A_36QWD_20200701_0_L2A/TCI.tif",
+        store_kind: StoreKind::RemoteGeoTiff,
+    },
+    CatalogEntry {
+        key: "sentinel-2-b04",
+        label: "Sentinel-2 L2A Red (B04)",
+        subtitle: "Cloud-Optimized GeoTIFF 10m Red Band on AWS S3",
+        store: "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/36/Q/WD/2020/7/S2A_36QWD_20200701_0_L2A/B04.tif",
+        store_kind: StoreKind::RemoteGeoTiff,
+    },
+];
 
 pub static ZARR_CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
@@ -318,10 +336,12 @@ pub fn get_catalog_entries(filter: CatalogCategoryFilter) -> Vec<&'static Catalo
         CatalogCategoryFilter::All => ZARR_CATALOG
             .iter()
             .chain(ICECHUNK_CATALOG.iter())
+            .chain(GEOTIFF_CATALOG.iter())
             .chain(PROCEDURAL_CATALOG.iter())
             .collect(),
         CatalogCategoryFilter::Zarr => ZARR_CATALOG.iter().collect(),
         CatalogCategoryFilter::Icechunk => ICECHUNK_CATALOG.iter().collect(),
+        CatalogCategoryFilter::GeoTiff => GEOTIFF_CATALOG.iter().collect(),
         CatalogCategoryFilter::Procedural => PROCEDURAL_CATALOG.iter().collect(),
     }
 }

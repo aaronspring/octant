@@ -68,22 +68,20 @@ impl AsyncFileReader for TokioFileReader {
     }
 }
 
-/// WASM HTTP byte range reader.
-#[cfg(target_arch = "wasm32")]
+/// Universal HTTP byte range reader backed by `fetch_url_byte_range`.
 #[derive(Debug, Clone)]
 pub struct WasmHttpTiffReader {
     url: String,
 }
 
-#[cfg(target_arch = "wasm32")]
 impl WasmHttpTiffReader {
     pub fn new(url: impl Into<String>) -> Self {
         Self { url: url.into() }
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncFileReader for WasmHttpTiffReader {
     async fn get_bytes(&self, range: Range<u64>) -> AsyncTiffResult<Bytes> {
         let len = range.end.saturating_sub(range.start);

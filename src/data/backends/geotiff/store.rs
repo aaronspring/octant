@@ -19,11 +19,11 @@ use super::slice::fetch_geotiff_block;
 
 /// BlockStore for reading tiled and striped TIFF/GeoTIFF raster datasets.
 pub struct GeoTiffBlockStore {
-    uri: String,
-    reader: Arc<dyn AsyncFileReader>,
-    tiff: TIFF,
-    metadata: DatasetMetadata,
-    decoder_registry: Arc<DecoderRegistry>,
+    pub(crate) uri: String,
+    pub(crate) reader: Arc<dyn AsyncFileReader>,
+    pub(crate) tiff: TIFF,
+    pub(crate) metadata: DatasetMetadata,
+    pub(crate) decoder_registry: Arc<DecoderRegistry>,
 }
 
 impl GeoTiffBlockStore {
@@ -94,7 +94,7 @@ impl GeoTiffBlockStore {
         })
     }
 
-    fn resolve_ifd(&self, var: &str) -> Option<&async_tiff::ImageFileDirectory> {
+    pub(crate) fn resolve_ifd(&self, var: &str) -> Option<&async_tiff::ImageFileDirectory> {
         if var.starts_with("overview_") {
             let idx = var
                 .strip_prefix("overview_")?

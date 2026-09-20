@@ -13,8 +13,9 @@ pub enum StoreKind {
     LocalZarr,
     RemoteIcechunk,
     LocalIcechunk,
-    LocalNetCdf,
+    RemoteGeoTiff,
     LocalGeoTiff,
+    LocalNetCdf,
     ProceduralVolume4D,
     ProceduralRandom,
 }
@@ -26,8 +27,10 @@ impl StoreKind {
             StoreKind::LocalZarr => crate::data::DataSourceKind::LocalZarr,
             StoreKind::RemoteIcechunk => crate::data::DataSourceKind::RemoteIcechunk,
             StoreKind::LocalIcechunk => crate::data::DataSourceKind::LocalIcechunk,
+            StoreKind::RemoteGeoTiff | StoreKind::LocalGeoTiff => {
+                crate::data::DataSourceKind::GeoTiff
+            }
             StoreKind::LocalNetCdf => crate::data::DataSourceKind::NetCdf,
-            StoreKind::LocalGeoTiff => crate::data::DataSourceKind::GeoTiff,
             StoreKind::ProceduralVolume4D | StoreKind::ProceduralRandom => {
                 crate::data::DataSourceKind::Procedural
             }
@@ -41,7 +44,7 @@ impl StoreKind {
             crate::data::DataSourceKind::RemoteIcechunk => StoreKind::RemoteIcechunk,
             crate::data::DataSourceKind::LocalIcechunk => StoreKind::LocalIcechunk,
             crate::data::DataSourceKind::NetCdf => StoreKind::LocalNetCdf,
-            crate::data::DataSourceKind::GeoTiff => StoreKind::LocalGeoTiff,
+            crate::data::DataSourceKind::GeoTiff => StoreKind::RemoteGeoTiff,
             crate::data::DataSourceKind::Procedural => StoreKind::ProceduralVolume4D,
             _ => StoreKind::ProceduralRandom,
         }
@@ -63,9 +66,13 @@ impl StoreKind {
         match (explicit, inferred) {
             (Some(kind), Some(inf)) => {
                 if (kind == StoreKind::RemoteZarr && inf == StoreKind::RemoteIcechunk)
+                    || (kind == StoreKind::RemoteZarr && inf == StoreKind::RemoteGeoTiff)
+                    || (kind == StoreKind::RemoteZarr && inf == StoreKind::LocalGeoTiff)
+                    || (kind == StoreKind::RemoteZarr && inf == StoreKind::LocalNetCdf)
                     || (kind == StoreKind::LocalZarr && inf == StoreKind::LocalIcechunk)
                     || (kind == StoreKind::LocalZarr && inf == StoreKind::LocalNetCdf)
                     || (kind == StoreKind::LocalZarr && inf == StoreKind::LocalGeoTiff)
+                    || (kind == StoreKind::LocalZarr && inf == StoreKind::RemoteGeoTiff)
                 {
                     inf
                 } else {

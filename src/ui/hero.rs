@@ -410,11 +410,16 @@ fn intake_row(ui: &mut egui::Ui, app: &mut OctantApp) {
 }
 
 fn sample_slash_chips_row(ui: &mut egui::Ui, app: &mut OctantApp) {
-    let samples: [(&str, &str, &str); 2] = [
+    let samples: [(&str, &str, &str); 3] = [
         (
             "/seasfire",
             "https://s3.bgc-jena.mpg.de:9000/misc/seasfire_rechunked.zarr",
             "Global wildfire & climate rechunked dataset (Zarr)",
+        ),
+        (
+            "/sentinel-2",
+            "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/36/Q/WD/2020/7/S2A_36QWD_20200701_0_L2A/TCI.tif",
+            "Sentinel-2 L2A True Color COG (AWS S3)",
         ),
         (
             "/procedural-4d",
