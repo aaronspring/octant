@@ -9,6 +9,8 @@ pub mod reader;
 pub mod slice;
 pub mod store;
 #[cfg(test)]
+pub mod test_utils;
+#[cfg(test)]
 pub mod tests;
 
 pub use store::GeoTiffBlockStore;
