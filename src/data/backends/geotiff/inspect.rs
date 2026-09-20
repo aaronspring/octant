@@ -155,21 +155,21 @@ fn extract_ifd_attributes(ifd: &ImageFileDirectory) -> HashMap<String, String> {
         attrs.insert("_FillValue".into(), nodata.into());
         attrs.insert("nodata".into(), nodata.into());
     }
-    if let Some(desc) = ifd.image_description() {
-        attrs.insert("description".into(), desc.into());
-    }
-    if let Some(soft) = ifd.software() {
-        attrs.insert("software".into(), soft.into());
-    }
-    if let Some(dt) = ifd.date_time() {
-        attrs.insert("datetime".into(), dt.into());
+    for (k, v) in [
+        ("description", ifd.image_description()),
+        ("software", ifd.software()),
+        ("datetime", ifd.date_time()),
+    ] {
+        if let Some(val) = v {
+            attrs.insert(k.into(), val.into());
+        }
     }
     if let Some(geo) = ifd.geo_key_directory() {
         if let Some(ref cit) = geo.citation {
             attrs.insert("crs_citation".into(), cit.clone());
         }
-        if let Some(ref proj_cit) = geo.proj_citation {
-            attrs.insert("projection_citation".into(), proj_cit.clone());
+        if let Some(ref cit) = geo.proj_citation {
+            attrs.insert("projection_citation".into(), cit.clone());
         }
     }
     match ifd.photometric_interpretation() {

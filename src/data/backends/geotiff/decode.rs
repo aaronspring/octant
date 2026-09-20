@@ -40,6 +40,21 @@ pub fn unpredict_buffer(
     Ok(buf)
 }
 
+macro_rules! unpred_diff {
+    ($T:ident, $row:expr, $samples:expr) => {{
+        let sz = std::mem::size_of::<$T>();
+        let step = $samples * sz;
+        for i in (step..$row.len()).step_by(sz) {
+            let prev =
+                $T::from_ne_bytes($row[i - step..i - step + sz].try_into().unwrap_or_default());
+            let sum = $T::from_ne_bytes($row[i..i + sz].try_into().unwrap_or_default())
+                .wrapping_add(prev)
+                .to_ne_bytes();
+            $row[i..i + sz].copy_from_slice(&sum);
+        }
+    }};
+}
+
 fn unpredict_horizontal(
     buf: &mut [u8],
     samples: usize,
@@ -58,40 +73,9 @@ fn unpredict_horizontal(
                     row[i] = row[i].wrapping_add(row[i - samples]);
                 }
             }
-            9..=16 => {
-                let step = samples * 2;
-                for i in (step..row.len()).step_by(2) {
-                    let prev = u16::from_ne_bytes([row[i - step], row[i - step + 1]]);
-                    let sum = u16::from_ne_bytes([row[i], row[i + 1]])
-                        .wrapping_add(prev)
-                        .to_ne_bytes();
-                    row[i..i + 2].copy_from_slice(&sum);
-                }
-            }
-            17..=32 => {
-                let step = samples * 4;
-                for i in (step..row.len()).step_by(4) {
-                    let prev = u32::from_ne_bytes(
-                        row[i - step..i - step + 4].try_into().unwrap_or_default(),
-                    );
-                    let sum = u32::from_ne_bytes(row[i..i + 4].try_into().unwrap_or_default())
-                        .wrapping_add(prev)
-                        .to_ne_bytes();
-                    row[i..i + 4].copy_from_slice(&sum);
-                }
-            }
-            33..=64 => {
-                let step = samples * 8;
-                for i in (step..row.len()).step_by(8) {
-                    let prev = u64::from_ne_bytes(
-                        row[i - step..i - step + 8].try_into().unwrap_or_default(),
-                    );
-                    let sum = u64::from_ne_bytes(row[i..i + 8].try_into().unwrap_or_default())
-                        .wrapping_add(prev)
-                        .to_ne_bytes();
-                    row[i..i + 8].copy_from_slice(&sum);
-                }
-            }
+            9..=16 => unpred_diff!(u16, row, samples),
+            17..=32 => unpred_diff!(u32, row, samples),
+            33..=64 => unpred_diff!(u64, row, samples),
             _ => return Err(format!("Unsupported bits for horizontal predictor: {bits}")),
         }
     }
@@ -104,10 +88,13 @@ fn unpredict_float(
     bits: u16,
     width: usize,
 ) -> Result<Vec<u8>, String> {
-    let bytes_per_sample = (bits as usize) / 8;
-    let row_stride = width * samples * bytes_per_sample;
+    let bps = (bits as usize) / 8;
+    let row_stride = width * samples * bps;
     if row_stride == 0 {
         return Ok(input);
+    }
+    if !matches!(bps, 2 | 4 | 8) {
+        return Err(format!("Unsupported float predictor bits: {bits}"));
     }
     let mut output = vec![0u8; input.len()];
     for (in_row, out_row) in input
@@ -117,35 +104,13 @@ fn unpredict_float(
         for i in samples..in_row.len() {
             in_row[i] = in_row[i].wrapping_add(in_row[i - samples]);
         }
-        let plane_len = in_row.len() / bytes_per_sample;
-        match bytes_per_sample {
-            2 => {
-                for (i, chunk) in out_row.chunks_exact_mut(2).enumerate() {
-                    chunk.copy_from_slice(
-                        &u16::from_be_bytes([in_row[i], in_row[plane_len + i]]).to_ne_bytes(),
-                    );
-                }
+        let plane_len = in_row.len() / bps;
+        for (i, chunk) in out_row.chunks_exact_mut(bps).enumerate() {
+            for (b, byte) in chunk.iter_mut().enumerate() {
+                *byte = in_row[plane_len * b + i];
             }
-            4 => {
-                for (i, chunk) in out_row.chunks_exact_mut(4).enumerate() {
-                    chunk.copy_from_slice(
-                        &u32::from_be_bytes([
-                            in_row[i],
-                            in_row[plane_len + i],
-                            in_row[plane_len * 2 + i],
-                            in_row[plane_len * 3 + i],
-                        ])
-                        .to_ne_bytes(),
-                    );
-                }
-            }
-            8 => {
-                for (i, chunk) in out_row.chunks_exact_mut(8).enumerate() {
-                    let arr: [u8; 8] = std::array::from_fn(|idx| in_row[plane_len * idx + i]);
-                    chunk.copy_from_slice(&u64::from_be_bytes(arr).to_ne_bytes());
-                }
-            }
-            _ => return Err(format!("Unsupported float predictor bits: {bits}")),
+            #[cfg(target_endian = "little")]
+            chunk.reverse();
         }
     }
     Ok(output)

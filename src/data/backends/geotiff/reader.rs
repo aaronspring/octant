@@ -59,16 +59,11 @@ impl AsyncFileReader for TokioFileReader {
         let mut file = self.file.lock().await;
         file.seek(SeekFrom::Start(range.start)).await?;
         let to_read = (range.end.saturating_sub(range.start)) as usize;
-        let mut buffer = vec![0u8; to_read];
-        let mut total = 0;
-        while total < to_read {
-            let n = file.read(&mut buffer[total..]).await?;
-            if n == 0 {
-                break;
-            }
-            total += n;
-        }
-        buffer.truncate(total);
+        let mut buffer = Vec::with_capacity(to_read);
+        (&mut *file)
+            .take(to_read as u64)
+            .read_to_end(&mut buffer)
+            .await?;
         Ok(Bytes::from(buffer))
     }
 }

@@ -41,74 +41,66 @@ pub async fn fetch_geotiff_block(
     let is_palette = ifd.photometric_interpretation() == PhotometricInterpretation::RGBPalette;
     let colormap = ifd.colormap();
 
-    let (values, out_shape, out_dims) = if let Some(band_idx) = band_opt {
-        let mut buffer = vec![f32::NAN; plane_len];
+    let (target_bands, is_single_band) = match band_opt {
+        Some(b) => (vec![b], true),
+        None => {
+            let total = if is_palette && colormap.is_some() {
+                3
+            } else {
+                ifd.samples_per_pixel() as usize
+            };
+            ((0..total).collect(), false)
+        }
+    };
+
+    let total_bands = target_bands.len();
+    let mut buffer = vec![f32::NAN; total_bands * plane_len];
+
+    if is_palette && let Some(cmap) = colormap {
+        let mut idx_buf = vec![f32::NAN; plane_len];
         read_region(
             ifd,
             endianness,
             reader,
             decoder_registry,
             &window,
-            &[band_idx],
-            &mut [&mut buffer],
+            &[0],
+            &mut [&mut idx_buf],
         )
         .await?;
-        if is_palette
-            && let Some(cmap) = colormap
-            && let Some(ch) = palette_channel(&request.variable)
-        {
-            let bits = ifd.bits_per_sample().first().copied().unwrap_or(8);
-            buffer = apply_colormap(&buffer, cmap, bits, ch);
-        }
-        (
-            Arc::from(buffer.into_boxed_slice()),
-            vec![out_h, out_w],
-            vec!["y".into(), "x".into()],
-        )
-    } else {
-        let total_bands = if is_palette && colormap.is_some() {
-            3
+        let bits = ifd.bits_per_sample().first().copied().unwrap_or(8);
+        if is_single_band {
+            let ch = palette_channel(&request.variable).unwrap_or(0);
+            buffer = apply_colormap(&idx_buf, cmap, bits, ch);
         } else {
-            ifd.samples_per_pixel() as usize
-        };
-        let mut buffer = vec![f32::NAN; total_bands * plane_len];
-        if is_palette && let Some(cmap) = colormap {
-            let mut idx_buf = vec![f32::NAN; plane_len];
-            read_region(
-                ifd,
-                endianness,
-                reader,
-                decoder_registry,
-                &window,
-                &[0],
-                &mut [&mut idx_buf],
-            )
-            .await?;
-            let bits = ifd.bits_per_sample().first().copied().unwrap_or(8);
-            for ch in 0..3 {
+            for ch in 0..total_bands {
                 let (start, end) = (ch * plane_len, (ch + 1) * plane_len);
                 buffer[start..end].copy_from_slice(&apply_colormap(&idx_buf, cmap, bits, ch));
             }
-        } else {
-            let (mut band_slices, bands): (Vec<&mut [f32]>, Vec<usize>) = buffer
-                .chunks_mut(plane_len)
-                .enumerate()
-                .take(total_bands)
-                .map(|(i, chunk)| (chunk, i))
-                .unzip();
-            read_region(
-                ifd,
-                endianness,
-                reader,
-                decoder_registry,
-                &window,
-                &bands,
-                &mut band_slices,
-            )
-            .await?;
         }
+    } else {
+        let (mut band_slices, bands): (Vec<&mut [f32]>, Vec<usize>) = buffer
+            .chunks_mut(plane_len)
+            .enumerate()
+            .take(total_bands)
+            .map(|(i, chunk)| (chunk, target_bands[i]))
+            .unzip();
+        read_region(
+            ifd,
+            endianness,
+            reader,
+            decoder_registry,
+            &window,
+            &bands,
+            &mut band_slices,
+        )
+        .await?;
+    }
+
+    let (out_shape, out_dims) = if is_single_band {
+        (vec![out_h, out_w], vec!["y".into(), "x".into()])
+    } else {
         (
-            Arc::from(buffer.into_boxed_slice()),
             vec![total_bands, out_h, out_w],
             vec!["band".into(), "y".into(), "x".into()],
         )
@@ -125,7 +117,7 @@ pub async fn fetch_geotiff_block(
         geo_bounds.compute_y_coords(ifd.image_height() as usize, row_start, row_end),
     );
 
-    let origin = if band_opt.is_some() {
+    let origin = if is_single_band {
         vec![row_start, col_start]
     } else {
         vec![0, row_start, col_start]
@@ -141,7 +133,7 @@ pub async fn fetch_geotiff_block(
         out_shape,
         out_dims,
         origin,
-        values,
+        Arc::from(buffer.into_boxed_slice()),
         coords,
         attributes,
     ))
@@ -177,7 +169,6 @@ async fn read_region(
         .first()
         .copied()
         .unwrap_or(SampleFormat::Uint);
-    let predictor = ifd.predictor().unwrap_or(Predictor::None);
     let is_white_zero = ifd.photometric_interpretation() == PhotometricInterpretation::WhiteIsZero;
 
     let decoder = decoder_registry
@@ -226,83 +217,113 @@ async fn read_region(
             if is_planar {
                 for (i, &band) in target_bands.iter().enumerate() {
                     let idx = band * chunks_per_band + ty * tiles_x + tx;
-                    if idx >= offsets.len() {
-                        continue;
-                    }
-                    let raw = reader
-                        .get_bytes(offsets[idx]..offsets[idx] + byte_counts[idx])
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let decomp = decoder
-                        .decode_tile(
-                            raw,
-                            ifd.photometric_interpretation(),
-                            ifd.jpeg_tables(),
+                    if idx < offsets.len() {
+                        let unpred = fetch_and_decode_chunk(
+                            reader,
+                            &**decoder,
+                            ifd,
+                            offsets,
+                            byte_counts,
+                            idx,
                             1,
                             bits,
-                            None,
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let unpred = unpredict_buffer(decomp, predictor, 1, bits, buf_w, endianness)
-                        .map_err(|e| e.to_string())?;
-                    if let Some(out_slice) = out_slices.get_mut(i) {
-                        blit_chunk_to_window(
-                            &unpred,
                             buf_w,
-                            buf_h,
-                            1,
-                            true,
-                            orig_x,
-                            orig_y,
-                            sample_fmt,
-                            bits,
-                            is_white_zero,
-                            win,
-                            &[0],
-                            &mut [out_slice],
-                        );
+                            endianness,
+                        )
+                        .await?;
+                        if let Some(out_slice) = out_slices.get_mut(i) {
+                            blit_chunk_to_window(
+                                &unpred,
+                                buf_w,
+                                buf_h,
+                                1,
+                                true,
+                                orig_x,
+                                orig_y,
+                                sample_fmt,
+                                bits,
+                                is_white_zero,
+                                win,
+                                &[0],
+                                &mut [out_slice],
+                            );
+                        }
                     }
                 }
             } else {
                 let idx = ty * tiles_x + tx;
-                if idx >= offsets.len() {
-                    continue;
-                }
-                let raw = reader
-                    .get_bytes(offsets[idx]..offsets[idx] + byte_counts[idx])
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let decomp = decoder
-                    .decode_tile(
-                        raw,
-                        ifd.photometric_interpretation(),
-                        ifd.jpeg_tables(),
-                        samples as u16,
+                if idx < offsets.len() {
+                    let unpred = fetch_and_decode_chunk(
+                        reader,
+                        &**decoder,
+                        ifd,
+                        offsets,
+                        byte_counts,
+                        idx,
+                        samples,
                         bits,
-                        None,
+                        buf_w,
+                        endianness,
                     )
-                    .map_err(|e| e.to_string())?;
-                let unpred = unpredict_buffer(decomp, predictor, samples, bits, buf_w, endianness)
-                    .map_err(|e| e.to_string())?;
-                blit_chunk_to_window(
-                    &unpred,
-                    buf_w,
-                    buf_h,
-                    samples,
-                    false,
-                    orig_x,
-                    orig_y,
-                    sample_fmt,
-                    bits,
-                    is_white_zero,
-                    win,
-                    target_bands,
-                    out_slices,
-                );
+                    .await?;
+                    blit_chunk_to_window(
+                        &unpred,
+                        buf_w,
+                        buf_h,
+                        samples,
+                        false,
+                        orig_x,
+                        orig_y,
+                        sample_fmt,
+                        bits,
+                        is_white_zero,
+                        win,
+                        target_bands,
+                        out_slices,
+                    );
+                }
             }
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fetch_and_decode_chunk(
+    reader: &dyn AsyncFileReader,
+    decoder: &dyn async_tiff::decoder::Decoder,
+    ifd: &ImageFileDirectory,
+    offsets: &[u64],
+    byte_counts: &[u64],
+    idx: usize,
+    samples: usize,
+    bits: u16,
+    buf_w: usize,
+    endianness: Endianness,
+) -> Result<Vec<u8>, BlockStoreError> {
+    let raw = reader
+        .get_bytes(offsets[idx]..offsets[idx] + byte_counts[idx])
+        .await
+        .map_err(|e| e.to_string())?;
+    let decomp = decoder
+        .decode_tile(
+            raw,
+            ifd.photometric_interpretation(),
+            ifd.jpeg_tables(),
+            samples as u16,
+            bits,
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    unpredict_buffer(
+        decomp,
+        ifd.predictor().unwrap_or(Predictor::None),
+        samples,
+        bits,
+        buf_w,
+        endianness,
+    )
+    .map_err(BlockStoreError::from)
 }
 
 fn parse_slice_request(
