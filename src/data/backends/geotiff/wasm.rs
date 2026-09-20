@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use std::sync::{Mutex, OnceLock};
 
 use crate::data::DatasetMetadata;
-use crate::data::blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback};
+use crate::data::blocks::{BlockStore, BlockStoreError, ProgressCallback};
 use crate::data::octant_block::OctantBlock;
 use crate::data::slice_request::SliceRequest;
 
@@ -70,39 +70,24 @@ impl WasmGeoTiffBlockStore {
         });
 
         let target_url = url.to_string();
+        let loader_fut = async move {
+            let reader = Arc::new(WasmHttpTiffReader::new(&target_url));
+            match GeoTiffBlockStore::from_reader(&target_url, reader).await {
+                Ok(geo_store) => {
+                    let mut guard = inner.write().unwrap_or_else(|p| p.into_inner());
+                    *guard = Some(geo_store);
+                }
+                Err(e) => {
+                    let mut guard = load_error.write().unwrap_or_else(|p| p.into_inner());
+                    *guard = Some(e.to_string());
+                }
+            }
+        };
+
         #[cfg(target_arch = "wasm32")]
-        {
-            wasm_bindgen_futures::spawn_local(async move {
-                let reader = Arc::new(WasmHttpTiffReader::new(&target_url));
-                match GeoTiffBlockStore::from_reader(&target_url, reader).await {
-                    Ok(geo_store) => {
-                        let mut guard = inner.write().unwrap_or_else(|p| p.into_inner());
-                        *guard = Some(geo_store);
-                    }
-                    Err(e) => {
-                        let mut guard = load_error.write().unwrap_or_else(|p| p.into_inner());
-                        *guard = Some(e.to_string());
-                    }
-                }
-            });
-        }
+        wasm_bindgen_futures::spawn_local(loader_fut);
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            let rt = crate::utils::executor::get_shared_tokio_rt();
-            rt.spawn(async move {
-                let reader = Arc::new(WasmHttpTiffReader::new(&target_url));
-                match GeoTiffBlockStore::from_reader(&target_url, reader).await {
-                    Ok(geo_store) => {
-                        let mut guard = inner.write().unwrap_or_else(|p| p.into_inner());
-                        *guard = Some(geo_store);
-                    }
-                    Err(e) => {
-                        let mut guard = load_error.write().unwrap_or_else(|p| p.into_inner());
-                        *guard = Some(e.to_string());
-                    }
-                }
-            });
-        }
+        crate::utils::executor::get_shared_tokio_rt().spawn(loader_fut);
 
         store
     }
@@ -141,15 +126,6 @@ impl BlockStore for WasmGeoTiffBlockStore {
         .into())
     }
 
-    fn fetch_block(&self, request: &SliceRequest) -> Result<OctantBlock, BlockStoreError> {
-        let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
-        if let Some(ref store) = *guard {
-            store.fetch_block(request)
-        } else {
-            Err("GeoTIFF dataset is still loading metadata...".into())
-        }
-    }
-
     fn fetch_block_with_progress(
         &self,
         request: &SliceRequest,
@@ -158,15 +134,6 @@ impl BlockStore for WasmGeoTiffBlockStore {
         let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
         if let Some(ref store) = *guard {
             store.fetch_block_with_progress(request, on_progress)
-        } else {
-            Err("GeoTIFF dataset is still loading metadata...".into())
-        }
-    }
-
-    fn fetch_blocks(&self, requests: &[SliceRequest]) -> Result<BlockResult, BlockStoreError> {
-        let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
-        if let Some(ref store) = *guard {
-            store.fetch_blocks(requests)
         } else {
             Err("GeoTIFF dataset is still loading metadata...".into())
         }

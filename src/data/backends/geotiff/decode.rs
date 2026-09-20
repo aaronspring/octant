@@ -26,9 +26,21 @@ pub fn unpredict_buffer(
 ) -> Result<Vec<u8>, String> {
     if endianness == Endianness::BigEndian {
         match bits {
-            16 => buf.chunks_exact_mut(2).for_each(|c| c.swap(0, 1)),
-            32 => buf.chunks_exact_mut(4).for_each(|c| c.reverse()),
-            64 => buf.chunks_exact_mut(8).for_each(|c| c.reverse()),
+            16 => buf
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .for_each(|c| c.swap(0, 1)),
+            32 => buf
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .for_each(|c| c.reverse()),
+            64 => buf
+                .as_chunks_mut::<8>()
+                .0
+                .iter_mut()
+                .for_each(|c| c.reverse()),
             _ => {}
         }
     }
