@@ -33,16 +33,24 @@ pub fn slice_rgb_composite(
             &block.values[2 * plane_size..3 * plane_size],
             &block.values[3 * plane_size..4 * plane_size],
         );
-        let max_val = [c, m, y, k]
-            .iter()
-            .map(|s| crate::utils::compute_finite_min_max(s).1)
-            .fold(0.0f32, f32::max);
-        let scale = if max_val > 255.0 {
-            1.0 / max_val
-        } else if max_val > 1.0 {
-            1.0 / 255.0
+        let (c_min, c_max) = crate::utils::compute_finite_min_max(c);
+        let (m_min, m_max) = crate::utils::compute_finite_min_max(m);
+        let (y_min, y_max) = crate::utils::compute_finite_min_max(y);
+        let (k_min, k_max) = crate::utils::compute_finite_min_max(k);
+
+        let g_min = c_min.min(m_min).min(y_min).min(k_min);
+        let g_max = c_max.max(m_max).max(y_max).max(k_max);
+
+        let (scale, offset) = if g_min >= 0.0 && g_max <= 1.0 {
+            (1.0, 0.0)
+        } else if g_min >= 0.0 && g_max <= 255.0 {
+            (1.0 / 255.0, 0.0)
+        } else if g_min >= 0.0 && g_max <= 65535.0 {
+            (1.0 / 65535.0, 0.0)
+        } else if g_max > g_min {
+            (1.0 / (g_max - g_min), g_min)
         } else {
-            1.0
+            (1.0, 0.0)
         };
 
         let mut values = Vec::with_capacity(plane_size);
@@ -50,15 +58,18 @@ pub fn slice_rgb_composite(
             if c[i].is_nan() || m[i].is_nan() || y[i].is_nan() || k[i].is_nan() {
                 values.push(f32::NAN);
             } else {
-                let (c_n, m_n, y_n, k_n) = (
-                    (c[i] * scale).clamp(0.0, 1.0),
-                    (m[i] * scale).clamp(0.0, 1.0),
-                    (y[i] * scale).clamp(0.0, 1.0),
-                    (k[i] * scale).clamp(0.0, 1.0),
-                );
-                let r = ((1.0 - c_n) * (1.0 - k_n) * 255.0).clamp(0.0, 255.0);
-                let g = ((1.0 - m_n) * (1.0 - k_n) * 255.0).clamp(0.0, 255.0);
-                let b = ((1.0 - y_n) * (1.0 - k_n) * 255.0).clamp(0.0, 255.0);
+                let c_n = ((c[i] - offset) * scale).clamp(0.0, 1.0);
+                let m_n = ((m[i] - offset) * scale).clamp(0.0, 1.0);
+                let y_n = ((y[i] - offset) * scale).clamp(0.0, 1.0);
+                let k_n = ((k[i] - offset) * scale).clamp(0.0, 1.0);
+
+                let r_lin = (1.0 - c_n) * (1.0 - k_n);
+                let g_lin = (1.0 - m_n) * (1.0 - k_n);
+                let b_lin = (1.0 - y_n) * (1.0 - k_n);
+
+                let r = linear_to_srgb(r_lin);
+                let g = linear_to_srgb(g_lin);
+                let b = linear_to_srgb(b_lin);
                 values.push(pack_rgb(r, g, b));
             }
         }
@@ -125,6 +136,17 @@ pub fn slice_rgb_composite(
         format!("{} (RGB Composite)", block.variable_name),
         anim_extent,
     ))
+}
+
+#[inline(always)]
+fn linear_to_srgb(linear: f32) -> f32 {
+    let l = linear.clamp(0.0, 1.0);
+    let srgb = if l <= 0.0031308 {
+        l * 12.92
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
+    (srgb * 255.0).clamp(0.0, 255.0)
 }
 
 #[inline(always)]
