@@ -43,10 +43,12 @@ pub fn slice_rgb_composite(
 
         let is_i8_cmyk = (-128.0..0.0).contains(&g_min) && g_max <= 127.0;
 
-        let (scale, offset) = if is_i8_cmyk || (g_min >= 0.0 && g_max <= 255.0) {
+        let (scale, offset) = if is_i8_cmyk {
             (1.0 / 255.0, 0.0)
         } else if g_min >= 0.0 && g_max <= 1.0 {
             (1.0, 0.0)
+        } else if g_min >= 0.0 && g_max <= 255.0 {
+            (1.0 / 255.0, 0.0)
         } else if g_min >= 0.0 && g_max <= 65535.0 {
             (1.0 / 65535.0, 0.0)
         } else if g_max > g_min {
@@ -117,10 +119,14 @@ pub fn slice_rgb_composite(
 
     let is_i8_rgb = (-128.0..0.0).contains(&g_min) && g_max <= 127.0;
 
-    let (scale, offset) = if is_i8_rgb || (g_min >= 0.0 && g_max <= 255.0) {
+    let (scale, offset) = if is_i8_rgb {
         (1.0, 0.0)
     } else if g_min >= 0.0 && g_max <= 1.0 {
         (255.0, 0.0)
+    } else if g_min >= 0.0 && g_max <= 255.0 {
+        (1.0, 0.0)
+    } else if g_min >= 0.0 && g_max <= 65535.0 {
+        (255.0 / 65535.0, 0.0)
     } else if g_min >= 0.0 && g_max > 255.0 {
         (255.0 / g_max, 0.0)
     } else if g_max > g_min {

@@ -343,4 +343,23 @@ fn test_tiled_and_cmyk_fixtures_correctness() {
         assert_eq!(sum1 as u64, 12974724);
         assert_eq!(sum2 as u64, 11136492);
     }
+
+    // 7. predictor-3-rgb-f32.tif (151x157 3-band Float32 normalized [0.0, 1.0])
+    let p_pred3 = dir.join("predictor-3-rgb-f32.tif");
+    if p_pred3.exists() {
+        let store = GeoTiffBlockStore::open(p_pred3.to_str().unwrap()).unwrap();
+        let ifd = store.tiff().ifds().first().unwrap();
+        let (h, w) = (ifd.image_height() as usize, ifd.image_width() as usize);
+        let req = SliceRequest::full_range("raster", &[3, h, w]);
+        let block = store.fetch_block(&req).unwrap();
+        assert_eq!(block.values.len(), 3 * h * w);
+        let composite = crate::data::slicing::slice_rgb_composite(&block, [0, 1, 2], 1).unwrap();
+        assert_eq!(composite.values.len(), h * w);
+        let (_min_val, max_val) = crate::utils::compute_finite_min_max(&composite.values);
+        // Ensure values are properly scaled to full 24-bit TrueColor range and not black (min > 0 or max > 255)
+        assert!(
+            max_val > 255.0,
+            "Composite must scale to full 24-bit TrueColor, got max: {max_val}"
+        );
+    }
 }
