@@ -154,3 +154,37 @@ fn pack_rgb(r: f32, g: f32, b: f32) -> f32 {
     let packed = (r as u32) | ((g as u32) << 8) | ((b as u32) << 16);
     packed as f32
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rgb_pack_unpack_fidelity() {
+        let test_colors = [
+            (255.0, 255.0, 255.0),
+            (255.0, 254.0, 255.0),
+            (254.0, 255.0, 255.0),
+            (255.0, 255.0, 254.0),
+            (0.0, 0.0, 0.0),
+            (255.0, 0.0, 0.0),
+            (0.0, 255.0, 0.0),
+            (0.0, 0.0, 255.0),
+            (128.0, 128.0, 128.0),
+        ];
+
+        for (r, g, b) in test_colors {
+            let packed_f32 = pack_rgb(r, g, b);
+            let raw_u32 = packed_f32 as u32;
+            let unpacked_r = (raw_u32 & 0xFF) as f32;
+            let unpacked_g = ((raw_u32 >> 8) & 0xFF) as f32;
+            let unpacked_b = ((raw_u32 >> 16) & 0xFF) as f32;
+
+            assert_eq!(
+                (unpacked_r, unpacked_g, unpacked_b),
+                (r, g, b),
+                "Fidelity mismatch for color ({r}, {g}, {b})"
+            );
+        }
+    }
+}

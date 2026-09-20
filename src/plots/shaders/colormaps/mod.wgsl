@@ -107,7 +107,7 @@ fn evaluate_plot_color(val: f32, color: ColorUniforms) -> vec4<f32> {
 
     // Direct RGB Composite truecolor mode (colormap 1000)
     if (color.colormap == 1000u) {
-        let packed = u32(val + 0.5);
+        let packed = u32(val);
         let r = f32(packed & 0xFFu) / 255.0;
         let g = f32((packed >> 8u) & 0xFFu) / 255.0;
         let b = f32((packed >> 16u) & 0xFFu) / 255.0;

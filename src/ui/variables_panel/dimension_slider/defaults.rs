@@ -12,6 +12,7 @@ pub fn init_variable_dimension_defaults(app: &mut OctantApp, var_info: &Variable
     app.selected_dim_ranges.clear();
     app.spatial_dims.clear();
     app.animated_dim = None;
+    app.rgb_composite_channels = [0, 1, 2];
 
     if rank < 3 || var_info.shape.first().copied().unwrap_or(0) < 3 {
         app.rgb_composite_mode = false;

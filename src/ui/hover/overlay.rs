@@ -197,7 +197,7 @@ fn render_tooltip_popup(
     let (label_prefix, val_formatted) = if raw_val.is_nan() {
         ("Val:", "NaN".to_string())
     } else if is_rgb {
-        let packed = (raw_val.max(0.0) + 0.5) as u32;
+        let packed = raw_val.max(0.0) as u32;
         let r = packed & 0xFF;
         let g = (packed >> 8) & 0xFF;
         let b = (packed >> 16) & 0xFF;

@@ -316,4 +316,52 @@ fn test_tiled_and_cmyk_fixtures_correctness() {
         let sum: f64 = block.values.iter().map(|&v| v as f64).sum();
         assert_eq!(sum as u64, 8522658);
     }
+
+    // 5. tiled-jpeg-rgb-u8.tif (499x374 3-band RGB u8)
+    let p_jpeg_rgb = dir.join("tiled-jpeg-rgb-u8.tif");
+    if p_jpeg_rgb.exists() {
+        let store = GeoTiffBlockStore::open(p_jpeg_rgb.to_str().unwrap()).unwrap();
+        let ifd = store.tiff().ifds().first().unwrap();
+        let (h, w) = (ifd.image_height() as usize, ifd.image_width() as usize);
+        let req = SliceRequest::full_range("raster", &[3, h, w]);
+        let block = store.fetch_block(&req).unwrap();
+        assert_eq!(block.values.len(), 3 * h * w);
+        let plane_len = h * w;
+        let sum0: f64 = block.values[0..plane_len].iter().map(|&v| v as f64).sum();
+        let sum1: f64 = block.values[plane_len..2 * plane_len]
+            .iter()
+            .map(|&v| v as f64)
+            .sum();
+        let sum2: f64 = block.values[2 * plane_len..3 * plane_len]
+            .iter()
+            .map(|&v| v as f64)
+            .sum();
+        assert_eq!(sum0 as u64, 15409481);
+        assert_eq!(sum1 as u64, 13000245);
+        assert_eq!(sum2 as u64, 11099680);
+    }
+
+    // 6. tiled-jpeg-ycbcr.tif (499x374 3-band YCbCr u8)
+    let p_jpeg_ycbcr = dir.join("tiled-jpeg-ycbcr.tif");
+    if p_jpeg_ycbcr.exists() {
+        let store = GeoTiffBlockStore::open(p_jpeg_ycbcr.to_str().unwrap()).unwrap();
+        let ifd = store.tiff().ifds().first().unwrap();
+        let (h, w) = (ifd.image_height() as usize, ifd.image_width() as usize);
+        let req = SliceRequest::full_range("raster", &[3, h, w]);
+        let block = store.fetch_block(&req).unwrap();
+        assert_eq!(block.values.len(), 3 * h * w);
+        let plane_len = h * w;
+        let sum0: f64 = block.values[0..plane_len].iter().map(|&v| v as f64).sum();
+        let sum1: f64 = block.values[plane_len..2 * plane_len]
+            .iter()
+            .map(|&v| v as f64)
+            .sum();
+        let sum2: f64 = block.values[2 * plane_len..3 * plane_len]
+            .iter()
+            .map(|&v| v as f64)
+            .sum();
+        assert_eq!(sum0 as u64, 15414596);
+        assert_eq!(sum1 as u64, 12974724);
+        assert_eq!(sum2 as u64, 11136492);
+    }
 }
