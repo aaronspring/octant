@@ -1,7 +1,7 @@
 //! Unified plotted data container for visualization renderers.
 
-use super::matrix_data::MatrixData;
-use super::volume_data::VolumeData;
+use super::matrix::MatrixData;
+use super::volume::VolumeData;
 
 /// Unified enum encapsulating any plotted data payload resident in memory.
 #[derive(Debug, Clone)]

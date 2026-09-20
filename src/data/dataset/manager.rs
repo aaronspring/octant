@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::dataset::Dataset;
+use super::item::Dataset;
 
 #[derive(Default)]
 pub struct DatasetManager {

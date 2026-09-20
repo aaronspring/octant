@@ -3,11 +3,11 @@
 //! Multiple Dataset instances can coexist, allowing variables from
 //! completely different sources to be displayed together.
 
-use super::{
+use super::{handle::StoreHandle, source::DataSource};
+use crate::data::{
     blocks::BlockRequest,
-    data_source::DataSource,
+    metadata::DatasetMetadata,
     slice_request::{DimensionSelection, SliceRequest},
-    store_handle::StoreHandle,
 };
 
 #[derive(Clone)]
@@ -15,7 +15,7 @@ pub struct Dataset {
     pub id: String,
     pub source: DataSource,
     pub store: StoreHandle,
-    pub metadata: Option<crate::data::DatasetMetadata>,
+    pub metadata: Option<DatasetMetadata>,
     pub selected_variables: Vec<String>,
 }
 

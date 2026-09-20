@@ -1,3 +1,5 @@
+//! 3D volume data container for volumetric visualization.
+
 #[derive(Clone, Debug)]
 pub struct VolumeData {
     pub width: usize,
@@ -37,7 +39,7 @@ impl VolumeData {
         timestep: usize,
         max_timesteps: usize,
     ) -> Self {
-        let (values, min_val, max_val) = super::procedural::generate_procedural_volume_3d(
+        let (values, min_val, max_val) = crate::data::procedural::generate_procedural_volume_3d(
             width,
             height,
             depth,

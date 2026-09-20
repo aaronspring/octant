@@ -9,9 +9,9 @@
 
 //! Viewport-aware resampler that coordinates interactive pan/zoom with MatrixPyramid.
 
-use crate::data::matrix_data::MatrixData;
-use crate::data::pyramid::MatrixPyramid;
 use std::sync::Arc;
+
+use super::{matrix::MatrixData, pyramid::MatrixPyramid};
 
 /// A sampled viewport tile along with its normalized bounds in the source dataset.
 #[derive(Debug, Clone)]

@@ -5,9 +5,10 @@
 
 use std::sync::Arc;
 
-use super::{
+use super::source::DataSource;
+use crate::data::{
     blocks::{BlockResult, BlockStore, BlockStoreError, ProgressCallback},
-    data_source::DataSource,
+    metadata::DatasetMetadata,
     octant_block::OctantBlock,
     slice_request::SliceRequest,
 };
@@ -39,7 +40,7 @@ impl StoreHandle {
         self.backend.variables()
     }
 
-    pub fn inspect(&self) -> Result<super::DatasetMetadata, BlockStoreError> {
+    pub fn inspect(&self) -> Result<DatasetMetadata, BlockStoreError> {
         self.backend.inspect()
     }
 

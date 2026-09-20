@@ -3,14 +3,14 @@
 use std::sync::Arc;
 
 use super::{
-    blocks::{BlockStore, BlockStoreError},
-    data_source::{DataSource, DataSourceKind},
-    store_handle::StoreHandle,
+    handle::StoreHandle,
+    source::{DataSource, DataSourceKind},
 };
+use crate::data::blocks::{BlockStore, BlockStoreError};
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::backends::{geotiff::GeoTiffBlockStore, zarr::ZarrBlockStore};
-use super::backends::{
+use crate::data::backends::{geotiff::GeoTiffBlockStore, zarr::ZarrBlockStore};
+use crate::data::backends::{
     icechunk::IcechunkBlockStore, netcdf::NetCdfBlockStore, procedural::ProceduralBlockStore,
 };
 

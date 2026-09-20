@@ -1,3 +1,7 @@
+//! 2D matrix data container and layout definitions for rendering.
+
+use crate::data::coordinates::CoordinateGrid;
+
 /// Spatial layout and dimension structure of sliced matrix data.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SpatialLayout {
@@ -22,7 +26,7 @@ pub struct MatrixData {
     pub dataset_name: String,
     pub max_timesteps: usize,
     pub unique_values: Option<Vec<f32>>,
-    pub grid: crate::data::CoordinateGrid,
+    pub grid: CoordinateGrid,
 }
 
 impl MatrixData {
@@ -43,7 +47,7 @@ impl MatrixData {
             max_val,
             dataset_name,
             max_timesteps,
-            crate::data::CoordinateGrid::GlobalRegular,
+            CoordinateGrid::GlobalRegular,
         )
     }
 
@@ -56,7 +60,7 @@ impl MatrixData {
         max_val: f32,
         dataset_name: String,
         max_timesteps: usize,
-        grid: crate::data::CoordinateGrid,
+        grid: CoordinateGrid,
     ) -> Self {
         let unique_values = Self::compute_unique_values(&values);
         Self {
@@ -72,7 +76,7 @@ impl MatrixData {
         }
     }
 
-    pub fn with_grid(mut self, grid: crate::data::CoordinateGrid) -> Self {
+    pub fn with_grid(mut self, grid: CoordinateGrid) -> Self {
         self.grid = grid;
         self
     }
@@ -101,7 +105,7 @@ impl MatrixData {
         height: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (raw_data, min_v, max_v) =
-            super::procedural::generate_procedural_matrix(width, height, 0);
+            crate::data::procedural::generate_procedural_matrix(width, height, 0);
 
         Ok(Self::new(
             width,
@@ -109,7 +113,7 @@ impl MatrixData {
             raw_data,
             min_v,
             max_v,
-            format!("Random Matrix ({}x{})", width, height),
+            format!("Random Matrix ({width}x{height})"),
             1,
         ))
     }
