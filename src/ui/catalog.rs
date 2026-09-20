@@ -1,6 +1,7 @@
 use crate::app::{OctantApp, StoreKind};
 use crate::catalog::{
-    CatalogCategoryFilter, ICECHUNK_CATALOG, PROCEDURAL_CATALOG, ZARR_CATALOG, get_catalog_entries,
+    CatalogCategoryFilter, GEOTIFF_CATALOG, ICECHUNK_CATALOG, PROCEDURAL_CATALOG, ZARR_CATALOG,
+    get_catalog_entries,
 };
 use crate::ui::icons::{Icon, UiIconExt};
 
@@ -51,8 +52,10 @@ pub fn show_catalog_window(app: &mut OctantApp, ctx: &egui::Context) {
                 .inner_margin(egui::Margin::symmetric(14, 12))
                 .corner_radius(8.0)
                 .show(ui, |ui| {
-                    let total_count =
-                        ZARR_CATALOG.len() + ICECHUNK_CATALOG.len() + PROCEDURAL_CATALOG.len();
+                    let total_count = ZARR_CATALOG.len()
+                        + ICECHUNK_CATALOG.len()
+                        + GEOTIFF_CATALOG.len()
+                        + PROCEDURAL_CATALOG.len();
 
                     render_header(ui, total_count, &mut should_close);
                     ui.add_space(8.0);
@@ -115,6 +118,7 @@ fn render_search_and_filters(
 ) {
     let zarr_count = ZARR_CATALOG.len();
     let icechunk_count = ICECHUNK_CATALOG.len();
+    let geotiff_count = GEOTIFF_CATALOG.len();
     let procedural_count = PROCEDURAL_CATALOG.len();
 
     // Search input row
@@ -155,6 +159,7 @@ fn render_search_and_filters(
         let mut buf_all = [0u8; 32];
         let mut buf_zarr = [0u8; 32];
         let mut buf_ice = [0u8; 32];
+        let mut buf_geo = [0u8; 32];
         let mut buf_proc = [0u8; 32];
 
         ui.selectable_value(
@@ -171,6 +176,11 @@ fn render_search_and_filters(
             &mut app.catalog_category_filter,
             CatalogCategoryFilter::Icechunk,
             format_tab(&mut buf_ice, "Icechunk", icechunk_count),
+        );
+        ui.selectable_value(
+            &mut app.catalog_category_filter,
+            CatalogCategoryFilter::GeoTiff,
+            format_tab(&mut buf_geo, "GeoTIFF / COG", geotiff_count),
         );
         ui.selectable_value(
             &mut app.catalog_category_filter,
@@ -249,6 +259,11 @@ fn render_entry_card(
         StoreKind::RemoteIcechunk => (
             Icon::Icechunk,
             "[Icechunk]",
+            ui.visuals().widgets.active.bg_fill,
+        ),
+        StoreKind::RemoteGeoTiff | StoreKind::LocalGeoTiff => (
+            Icon::Folder,
+            "[GeoTIFF/COG]",
             ui.visuals().widgets.active.bg_fill,
         ),
         StoreKind::ProceduralVolume4D => (

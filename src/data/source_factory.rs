@@ -9,7 +9,7 @@ use super::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::backends::zarr::ZarrBlockStore;
+use super::backends::{geotiff::GeoTiffBlockStore, zarr::ZarrBlockStore};
 use super::backends::{
     icechunk::IcechunkBlockStore, netcdf::NetCdfBlockStore, procedural::ProceduralBlockStore,
 };
@@ -41,8 +41,11 @@ impl SourceFactory {
 
             DataSourceKind::NetCdf => Arc::new(NetCdfBlockStore::open_local(&source.uri)?),
 
+            #[cfg(not(target_arch = "wasm32"))]
+            DataSourceKind::GeoTiff => Arc::new(GeoTiffBlockStore::open(&source.uri)?),
+            #[cfg(target_arch = "wasm32")]
             DataSourceKind::GeoTiff => {
-                return Err("GeoTIFF backend not yet implemented".into());
+                crate::data::backends::geotiff::WasmGeoTiffBlockStore::get_or_create(&source.uri)
             }
 
             DataSourceKind::Other(kind) => {

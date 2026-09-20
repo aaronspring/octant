@@ -5,9 +5,28 @@
 mod shim {
     use std::io::Read;
 
-    #[repr(C)]
     pub struct ZstdDCtx {
-        _unused: u8,
+        decoder: Option<
+            ruzstd::decoding::StreamingDecoder<
+                std::io::Cursor<Vec<u8>>,
+                ruzstd::decoding::FrameDecoder,
+            >,
+        >,
+        input_accum: Vec<u8>,
+    }
+
+    #[repr(C)]
+    pub struct ZstdInBuffer {
+        pub src: *const core::ffi::c_void,
+        pub size: usize,
+        pub pos: usize,
+    }
+
+    #[repr(C)]
+    pub struct ZstdOutBuffer {
+        pub dst: *mut core::ffi::c_void,
+        pub size: usize,
+        pub pos: usize,
     }
 
     #[unsafe(no_mangle)]
@@ -26,7 +45,10 @@ mod shim {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn ZSTD_createDCtx() -> *mut ZstdDCtx {
-        Box::into_raw(Box::new(ZstdDCtx { _unused: 0 }))
+        Box::into_raw(Box::new(ZstdDCtx {
+            decoder: None,
+            input_accum: Vec::new(),
+        }))
     }
 
     #[unsafe(no_mangle)]
@@ -40,12 +62,103 @@ mod shim {
     }
 
     #[unsafe(no_mangle)]
+    pub extern "C" fn ZSTD_createDStream() -> *mut ZstdDCtx {
+        ZSTD_createDCtx()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ZSTD_freeDStream(zds: *mut ZstdDCtx) -> usize {
+        ZSTD_freeDCtx(zds)
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ZSTD_initDStream(zds: *mut ZstdDCtx) -> usize {
+        if !zds.is_null() {
+            let ctx = unsafe { &mut *zds };
+            ctx.decoder = None;
+            ctx.input_accum.clear();
+        }
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ZSTD_DCtx_reset(zds: *mut ZstdDCtx, _reset: u32) -> usize {
+        ZSTD_initDStream(zds)
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ZSTD_DStreamInSize() -> usize {
+        131072
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ZSTD_DStreamOutSize() -> usize {
+        131072
+    }
+
+    #[unsafe(no_mangle)]
     pub extern "C" fn ZSTD_DCtx_loadDictionary(
         _dctx: *mut ZstdDCtx,
         _dict: *const core::ffi::c_void,
         _dict_size: usize,
     ) -> usize {
         0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ZSTD_decompressStream(
+        zds: *mut ZstdDCtx,
+        output: *mut ZstdOutBuffer,
+        input: *mut ZstdInBuffer,
+    ) -> usize {
+        if zds.is_null() || output.is_null() || input.is_null() {
+            return (-(1isize)) as usize;
+        }
+
+        let ctx = unsafe { &mut *zds };
+        let out_buf = unsafe { &mut *output };
+        let in_buf = unsafe { &mut *input };
+
+        if in_buf.pos < in_buf.size && !in_buf.src.is_null() {
+            let chunk_len = in_buf.size - in_buf.pos;
+            let src_bytes = unsafe {
+                core::slice::from_raw_parts((in_buf.src as *const u8).add(in_buf.pos), chunk_len)
+            };
+            ctx.input_accum.extend_from_slice(src_bytes);
+            in_buf.pos = in_buf.size;
+        }
+
+        if ctx.decoder.is_none() {
+            let cursor = std::io::Cursor::new(std::mem::take(&mut ctx.input_accum));
+            match ruzstd::decoding::StreamingDecoder::new(cursor) {
+                Ok(dec) => {
+                    ctx.decoder = Some(dec);
+                }
+                Err(_) => return (-(1isize)) as usize,
+            }
+        }
+
+        let Some(ref mut dec) = ctx.decoder else {
+            return (-(1isize)) as usize;
+        };
+
+        if out_buf.pos >= out_buf.size || out_buf.dst.is_null() {
+            return 0;
+        }
+
+        let avail_out = out_buf.size - out_buf.pos;
+        let dst_slice = unsafe {
+            core::slice::from_raw_parts_mut((out_buf.dst as *mut u8).add(out_buf.pos), avail_out)
+        };
+
+        match dec.read(dst_slice) {
+            Ok(0) => 0,
+            Ok(n) => {
+                out_buf.pos += n;
+                0
+            }
+            Err(_) => (-(1isize)) as usize,
+        }
     }
 
     #[unsafe(no_mangle)]

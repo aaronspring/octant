@@ -106,11 +106,33 @@ impl BlockPrefetcher {
                         completed_atomic.fetch_add(chunk_bytes, Ordering::Relaxed);
                     }
                 };
-                let result = crate::data::backends::zarr::load_one_wasm_with_progress(
-                    &request,
-                    Some(&mut on_progress),
-                )
-                .await
+                let result = match request.store.source().kind {
+                    crate::data::DataSourceKind::RemoteIcechunk
+                    | crate::data::DataSourceKind::LocalIcechunk => {
+                        crate::data::backends::icechunk::wasm::load_one_icechunk_wasm_with_progress(
+                            &request,
+                            Some(&mut on_progress),
+                        )
+                        .await
+                    }
+                    crate::data::DataSourceKind::GeoTiff => {
+                        crate::data::backends::geotiff::wasm::load_one_geotiff_wasm_with_progress(
+                            &request,
+                            Some(&mut on_progress),
+                        )
+                        .await
+                    }
+                    crate::data::DataSourceKind::Procedural => request
+                        .store
+                        .fetch_with_progress(&request.slice, Some(&mut on_progress)),
+                    _ => {
+                        crate::data::backends::zarr::load_one_wasm_with_progress(
+                            &request,
+                            Some(&mut on_progress),
+                        )
+                        .await
+                    }
+                }
                 .map_err(|error| error.to_string());
                 let _ = tx.send(PrefetchResult { key, result });
             });

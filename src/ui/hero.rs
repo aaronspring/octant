@@ -327,9 +327,9 @@ fn intake_row(ui: &mut egui::Ui, app: &mut OctantApp) {
                 let hint_text = if intake_w < 310.0 {
                     "URL or path..."
                 } else if intake_w < 400.0 {
-                    "https://... or path (.zarr, .nc)..."
+                    "https://... or path (.zarr, .nc, .tiff, ...)"
                 } else {
-                    "https://... or path (.zarr, .icechunk, .nc, .h5)..."
+                    "https://... or path (.zarr, .icechunk, .nc, .h5, .tiff, ...)"
                 };
 
                 let desired_w = (ui.available_width() - right_reserve).max(30.0);
@@ -410,11 +410,16 @@ fn intake_row(ui: &mut egui::Ui, app: &mut OctantApp) {
 }
 
 fn sample_slash_chips_row(ui: &mut egui::Ui, app: &mut OctantApp) {
-    let samples: [(&str, &str, &str); 2] = [
+    let samples: [(&str, &str, &str); 3] = [
         (
             "/seasfire",
             "https://s3.bgc-jena.mpg.de:9000/misc/seasfire_rechunked.zarr",
             "Global wildfire & climate rechunked dataset (Zarr)",
+        ),
+        (
+            "/sentinel-2",
+            "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/36/Q/WD/2020/7/S2A_36QWD_20200701_0_L2A/TCI.tif",
+            "Sentinel-2 L2A True Color COG (AWS S3)",
         ),
         (
             "/procedural-4d",
@@ -619,9 +624,9 @@ fn render_drag_hover_cue(ui: &mut egui::Ui) {
         crate::ui::icons::Icon::DropTray.paint(ui.painter(), icon_rect, accent, is_dark);
 
         let msg = if width < 330.0 {
-            "Drop dataset (.nc, .zarr, .icechunk)"
+            "Drop dataset (.nc, .zarr, .icechunk, .tif)"
         } else {
-            "Drop dataset to load (.nc, .h5, .zarr, .icechunk)"
+            "Drop dataset to load (.nc, .h5, .zarr, .icechunk, .tif)"
         };
 
         ui.painter().text(
@@ -663,9 +668,9 @@ fn render_warning_banner(ui: &mut egui::Ui) {
         crate::ui::icons::Icon::Warning.paint(ui.painter(), icon_rect, warning_color, is_dark);
 
         let msg = if width < 340.0 {
-            "Unsupported format (.nc, .zarr, .icechunk)"
+            "Unsupported format (.nc, .zarr, .icechunk, .tif)"
         } else {
-            "Unsupported type — supported: .nc, .h5, .zarr, .icechunk"
+            "Unsupported type — supported: .nc, .h5, .zarr, .icechunk, .tif"
         };
 
         ui.painter().text(

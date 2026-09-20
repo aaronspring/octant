@@ -556,16 +556,33 @@ impl OctantApp {
 
         let compute_bounds = !self.lock_color_bounds;
 
-        if let Some(mdata) = block.slice_2d_with_ranges(
-            x_dim,
-            y_dim,
-            x_range,
-            y_range,
-            &fixed_indices,
-            self.animated_dim_extent(),
-            &format!("Block Cache [{}]", block.variable_name),
-            compute_bounds,
-        ) {
+        let mdata_opt = if self.rgb_composite_mode && block.shape.len() >= 3 && block.shape[0] >= 3
+        {
+            crate::data::slicing::slice_rgb_composite(
+                block,
+                self.rgb_composite_channels,
+                self.animated_dim_extent(),
+            )
+        } else {
+            if self.rgb_composite_mode {
+                self.rgb_composite_mode = false;
+                if self.active_colormap == 1000 {
+                    self.active_colormap = 0;
+                }
+            }
+            block.slice_2d_with_ranges(
+                x_dim,
+                y_dim,
+                x_range,
+                y_range,
+                &fixed_indices,
+                self.animated_dim_extent(),
+                &format!("Block Cache [{}]", block.variable_name),
+                compute_bounds,
+            )
+        };
+
+        if let Some(mdata) = mdata_opt {
             self.rebuild_pipeline_with_matrix_data(mdata);
         }
 
