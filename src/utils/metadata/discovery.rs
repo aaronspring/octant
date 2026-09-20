@@ -9,13 +9,16 @@ use zarrs::node::{NodeMetadata, NodePath, get_child_nodes};
 use zarrs::storage::ReadableWritableListableStorage;
 
 use super::array_open::variable_info_from_array;
-use super::cf::{ParsedCfAttributes, merge_parent_attributes};
+#[cfg(not(target_arch = "wasm32"))]
+use super::cf::ParsedCfAttributes;
+use super::cf::merge_parent_attributes;
 use super::node_info::{
     extract_group_attributes_from_node_metadata,
     extract_store_variables_from_consolidated_metadata,
     variable_info_from_node_metadata_with_parent_attributes,
 };
 use crate::data::metadata::VariableInfo;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::utils::units::calculate_variable_size_bytes;
 
 /// Format-agnostic store variable metadata extractor.
