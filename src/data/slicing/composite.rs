@@ -41,10 +41,12 @@ pub fn slice_rgb_composite(
         let g_min = c_min.min(m_min).min(y_min).min(k_min);
         let g_max = c_max.max(m_max).max(y_max).max(k_max);
 
-        let (scale, offset) = if g_min >= 0.0 && g_max <= 1.0 {
-            (1.0, 0.0)
-        } else if g_min >= 0.0 && g_max <= 255.0 {
+        let is_i8_cmyk = (-128.0..0.0).contains(&g_min) && g_max <= 127.0;
+
+        let (scale, offset) = if is_i8_cmyk || (g_min >= 0.0 && g_max <= 255.0) {
             (1.0 / 255.0, 0.0)
+        } else if g_min >= 0.0 && g_max <= 1.0 {
+            (1.0, 0.0)
         } else if g_min >= 0.0 && g_max <= 65535.0 {
             (1.0 / 65535.0, 0.0)
         } else if g_max > g_min {
@@ -58,10 +60,20 @@ pub fn slice_rgb_composite(
             if c[i].is_nan() || m[i].is_nan() || y[i].is_nan() || k[i].is_nan() {
                 values.push(f32::NAN);
             } else {
-                let c_n = ((c[i] - offset) * scale).clamp(0.0, 1.0);
-                let m_n = ((m[i] - offset) * scale).clamp(0.0, 1.0);
-                let y_n = ((y[i] - offset) * scale).clamp(0.0, 1.0);
-                let k_n = ((k[i] - offset) * scale).clamp(0.0, 1.0);
+                let (raw_c, raw_m, raw_y, raw_k) = if is_i8_cmyk {
+                    (
+                        (c[i] as i8 as u8) as f32,
+                        (m[i] as i8 as u8) as f32,
+                        (y[i] as i8 as u8) as f32,
+                        (k[i] as i8 as u8) as f32,
+                    )
+                } else {
+                    (c[i], m[i], y[i], k[i])
+                };
+                let c_n = ((raw_c - offset) * scale).clamp(0.0, 1.0);
+                let m_n = ((raw_m - offset) * scale).clamp(0.0, 1.0);
+                let y_n = ((raw_y - offset) * scale).clamp(0.0, 1.0);
+                let k_n = ((raw_k - offset) * scale).clamp(0.0, 1.0);
 
                 let r_lin = (1.0 - c_n) * (1.0 - k_n);
                 let g_lin = (1.0 - m_n) * (1.0 - k_n);
@@ -103,7 +115,9 @@ pub fn slice_rgb_composite(
     let (b_min, b_max) = crate::utils::compute_finite_min_max(b);
     let (g_min, g_max) = (r_min.min(g_min).min(b_min), r_max.max(g_max).max(b_max));
 
-    let (scale, offset) = if g_min >= 0.0 && g_max <= 255.0 {
+    let is_i8_rgb = (-128.0..0.0).contains(&g_min) && g_max <= 127.0;
+
+    let (scale, offset) = if is_i8_rgb || (g_min >= 0.0 && g_max <= 255.0) {
         (1.0, 0.0)
     } else if g_min >= 0.0 && g_max <= 1.0 {
         (255.0, 0.0)
@@ -120,9 +134,18 @@ pub fn slice_rgb_composite(
         if r[i].is_nan() || g[i].is_nan() || b[i].is_nan() {
             values.push(f32::NAN);
         } else {
-            let r_n = ((r[i] - offset) * scale).clamp(0.0, 255.0);
-            let g_n = ((g[i] - offset) * scale).clamp(0.0, 255.0);
-            let b_n = ((b[i] - offset) * scale).clamp(0.0, 255.0);
+            let (raw_r, raw_g, raw_b) = if is_i8_rgb {
+                (
+                    (r[i] as i8 as u8) as f32,
+                    (g[i] as i8 as u8) as f32,
+                    (b[i] as i8 as u8) as f32,
+                )
+            } else {
+                (r[i], g[i], b[i])
+            };
+            let r_n = ((raw_r - offset) * scale).clamp(0.0, 255.0);
+            let g_n = ((raw_g - offset) * scale).clamp(0.0, 255.0);
+            let b_n = ((raw_b - offset) * scale).clamp(0.0, 255.0);
             values.push(pack_rgb(r_n, g_n, b_n));
         }
     }

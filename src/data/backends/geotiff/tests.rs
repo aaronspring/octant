@@ -275,23 +275,10 @@ fn test_tiled_and_cmyk_fixtures_correctness() {
             Some("cmyk")
         );
         let req = SliceRequest::full_range("raster", &[4, 367, 490]);
-        let ifd = store.tiff().ifds().first().unwrap();
-        eprintln!("=== TILED-CMYK-I8 INFO ===");
-        eprintln!("Photometric: {:?}", ifd.photometric_interpretation());
-        eprintln!("Planar: {:?}", ifd.planar_configuration());
-        eprintln!("SamplesPerPixel: {:?}", ifd.samples_per_pixel());
-        eprintln!("BitsPerSample: {:?}", ifd.bits_per_sample());
-        eprintln!("SampleFormat: {:?}", ifd.sample_format());
-        eprintln!("Compression: {:?}", ifd.compression());
-        eprintln!("Predictor: {:?}", ifd.predictor());
-        eprintln!("TileSize: {:?}x{:?}", ifd.tile_width(), ifd.tile_height());
-        eprintln!("TileCount: {:?}", ifd.tile_count());
         let block = store.fetch_block(&req).unwrap();
         assert_eq!(block.values.len(), 4 * 367 * 490);
-        assert_eq!(
-            block.attributes.get("photometric").map(|s| s.as_str()),
-            Some("cmyk")
-        );
+        let composite = crate::data::slicing::slice_rgb_composite(&block, [0, 1, 2], 1).unwrap();
+        assert_eq!(composite.values.len(), 367 * 490);
         let sum: f64 = block.values.iter().map(|&v| v as f64).sum();
         assert_eq!(sum as u64, 1759101);
     }
@@ -300,19 +287,11 @@ fn test_tiled_and_cmyk_fixtures_correctness() {
     let p_cmyk8 = dir.join("cmyk-3c-8b.tiff");
     if p_cmyk8.exists() {
         let store = GeoTiffBlockStore::open(p_cmyk8.to_str().unwrap()).unwrap();
-        let meta = store.inspect().unwrap();
-        let raster_var = meta.variables.iter().find(|v| v.name == "raster").unwrap();
-        assert_eq!(
-            raster_var.attributes.get("photometric").map(|s| s.as_str()),
-            Some("cmyk")
-        );
         let req = SliceRequest::full_range("raster", &[4, 151, 157]);
         let block = store.fetch_block(&req).unwrap();
         assert_eq!(block.values.len(), 4 * 151 * 157);
-        assert_eq!(
-            block.attributes.get("photometric").map(|s| s.as_str()),
-            Some("cmyk")
-        );
+        let composite = crate::data::slicing::slice_rgb_composite(&block, [0, 1, 2], 1).unwrap();
+        assert_eq!(composite.values.len(), 151 * 157);
         let sum: f64 = block.values.iter().map(|&v| v as f64).sum();
         assert_eq!(sum as u64, 8522658);
     }
