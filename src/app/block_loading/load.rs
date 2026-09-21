@@ -19,7 +19,7 @@ impl OctantApp {
         let shape = var_info.shape.clone();
 
         let base_request = crate::ui::variables_panel::build_slice_request(self, &var_name, &shape);
-        let mut selections = base_request.selections.clone();
+        let mut selections = base_request.selections;
 
         if let Some(anim_dim) = self.animated_dim {
             let full_extent = shape.get(anim_dim).copied().unwrap_or(1) as usize;
@@ -50,7 +50,7 @@ impl OctantApp {
         let block_key = store_handle
             .as_ref()
             .map(|h| BlockRequest::new(h.clone(), slice_request.clone()).cache_key());
-        self.active_block_key = block_key.clone();
+        self.active_block_key = block_key;
 
         // 1. Cache HIT: Check if any resident block in memory (e.g. full dataset array) covers current_timestep
         if let Some(block) = self.block_cache.find_covering_block(
@@ -181,6 +181,6 @@ impl OctantApp {
         self.block_prefetcher.abort();
         self.is_playing = false;
         self.pending_target_step = None;
-        self.status_message = "⏹ Data fetch aborted by user.".to_string();
+        self.status_message = "Data fetch aborted by user.".to_string();
     }
 }

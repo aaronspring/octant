@@ -1,274 +1,17 @@
+//! Streamlined color picker popup with RGB channel edits, 2D SV area, and Hue/Alpha bars.
+
 use crate::ui::icons::{Icon, UiIconExt};
 use egui::{Color32, Pos2, Rect, Shape, Stroke, Vec2, ecolor::Hsva};
-use std::sync::Arc;
-
-/// Custom rendering closure type for `ColorShape::Custom`.
-pub type CustomShapeFn = Arc<dyn Fn(&egui::Painter, Rect, Color32, Stroke) + Send + Sync>;
-
-/// Shape definitions for custom color picker trigger buttons.
-#[derive(Clone)]
-pub enum ColorShape {
-    /// Left-pointing triangle (◁) filling the rect
-    LeftTriangle,
-    /// Right-pointing triangle (▷) filling the rect
-    RightTriangle,
-    /// Up-pointing triangle (△) filling the rect
-    UpTriangle,
-    /// Down-pointing triangle (▽) filling the rect
-    DownTriangle,
-    /// Circle centered inside the rect
-    Circle,
-    /// Rounded rectangle with specified corner radius
-    Rect(f32),
-    /// Custom polygon points normalized to `[0.0, 1.0]` relative to the rect bounding box
-    NormalizedPolygon(Vec<Pos2>),
-    /// Custom drawing callback allowing arbitrary rendering logic
-    Custom(CustomShapeFn),
-}
-
-impl ColorShape {
-    /// Convenient constructor for arbitrary custom shape rendering logic
-    pub fn custom(
-        f: impl Fn(&egui::Painter, Rect, Color32, Stroke) + Send + Sync + 'static,
-    ) -> Self {
-        Self::Custom(Arc::new(f))
-    }
-
-    /// Helper to paint the shape with given color and stroke inside `rect`.
-    pub fn paint(&self, painter: &egui::Painter, rect: Rect, color: Color32, stroke: Stroke) {
-        match self {
-            Self::LeftTriangle => {
-                let tip = Pos2::new(rect.min.x, rect.center().y);
-                let top = Pos2::new(rect.max.x, rect.min.y);
-                let bottom = Pos2::new(rect.max.x, rect.max.y);
-                painter.add(Shape::convex_polygon(vec![tip, top, bottom], color, stroke));
-            }
-            Self::RightTriangle => {
-                let top = Pos2::new(rect.min.x, rect.min.y);
-                let tip = Pos2::new(rect.max.x, rect.center().y);
-                let bottom = Pos2::new(rect.min.x, rect.max.y);
-                painter.add(Shape::convex_polygon(vec![top, tip, bottom], color, stroke));
-            }
-            Self::UpTriangle => {
-                let tip = Pos2::new(rect.center().x, rect.min.y);
-                let bottom_right = Pos2::new(rect.max.x, rect.max.y);
-                let bottom_left = Pos2::new(rect.min.x, rect.max.y);
-                painter.add(Shape::convex_polygon(
-                    vec![tip, bottom_right, bottom_left],
-                    color,
-                    stroke,
-                ));
-            }
-            Self::DownTriangle => {
-                let top_left = Pos2::new(rect.min.x, rect.min.y);
-                let top_right = Pos2::new(rect.max.x, rect.min.y);
-                let tip = Pos2::new(rect.center().x, rect.max.y);
-                painter.add(Shape::convex_polygon(
-                    vec![top_left, top_right, tip],
-                    color,
-                    stroke,
-                ));
-            }
-            Self::Circle => {
-                let radius = rect.width().min(rect.height()) / 2.0;
-                painter.circle(rect.center(), radius, color, stroke);
-            }
-            Self::Rect(rounding) => {
-                painter.rect(rect, *rounding, color, stroke, egui::StrokeKind::Middle);
-            }
-            Self::NormalizedPolygon(normalized_pts) => {
-                let mapped_pts: Vec<Pos2> = normalized_pts
-                    .iter()
-                    .map(|p| {
-                        Pos2::new(
-                            rect.min.x + p.x * rect.width(),
-                            rect.min.y + p.y * rect.height(),
-                        )
-                    })
-                    .collect();
-                if mapped_pts.len() >= 3 {
-                    painter.add(Shape::convex_polygon(mapped_pts, color, stroke));
-                }
-            }
-            Self::Custom(cb) => {
-                (cb)(painter, rect, color, stroke);
-            }
-        }
-    }
-}
-
-/// A flexible color picker button widget that supports arbitrary custom vector shapes
-/// and triggers a sleek, focused color picker popup.
-pub struct ShapeColorPicker<'a> {
-    id_salt: egui::Id,
-    color: &'a mut [f32; 4],
-    shape: ColorShape,
-    size: Option<Vec2>,
-    title: String,
-    tooltip: Option<String>,
-    anchor_offset: Vec2,
-}
-
-impl<'a> ShapeColorPicker<'a> {
-    /// Creates a new `ShapeColorPicker` for an RGBA float array `[f32; 4]`.
-    pub fn new(
-        id_salt: impl std::hash::Hash + std::fmt::Debug,
-        color: &'a mut [f32; 4],
-        shape: ColorShape,
-    ) -> Self {
-        Self {
-            id_salt: egui::Id::new(id_salt),
-            color,
-            shape,
-            size: None,
-            title: "Color Picker".to_string(),
-            tooltip: None,
-            anchor_offset: Vec2::new(-70.0, -250.0),
-        }
-    }
-
-    /// Sets the header title displayed inside the popup.
-    pub fn title(mut self, title: impl Into<String>) -> Self {
-        self.title = title.into();
-        self
-    }
-
-    /// Sets an optional hover tooltip on the shape button.
-    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
-        self.tooltip = Some(tooltip.into());
-        self
-    }
-
-    /// Sets an explicit widget size when rendered with `show()`.
-    pub fn size(mut self, size: Vec2) -> Self {
-        self.size = Some(size);
-        self
-    }
-
-    /// Sets the popup anchor offset relative to `rect.min`.
-    pub fn anchor_offset(mut self, offset: Vec2) -> Self {
-        self.anchor_offset = offset;
-        self
-    }
-
-    /// Displays the color picker widget at a specified pre-calculated `Rect`.
-    pub fn show_at(self, ui: &mut egui::Ui, rect: Rect) -> egui::Response {
-        let resp = ui.interact(rect, self.id_salt.with("btn"), egui::Sense::click());
-        let resp = if let Some(tip) = &self.tooltip {
-            resp.on_hover_text(tip)
-        } else {
-            resp
-        };
-
-        let style = ui.style();
-        let stroke = if resp.hovered() {
-            egui::Stroke::new(1.5_f32, style.visuals.widgets.active.fg_stroke.color)
-        } else {
-            egui::Stroke::new(
-                1.0_f32,
-                style.visuals.widgets.noninteractive.fg_stroke.color,
-            )
-        };
-
-        let color_c32 = Color32::from_rgba_unmultiplied(
-            (self.color[0] * 255.0).round() as u8,
-            (self.color[1] * 255.0).round() as u8,
-            (self.color[2] * 255.0).round() as u8,
-            (self.color[3] * 255.0).round() as u8,
-        );
-
-        // Paint the shape
-        self.shape.paint(ui.painter(), rect, color_c32, stroke);
-
-        // Popup open/close state
-        let popup_open_id = self.id_salt.with("popup_open");
-        let popup_area_id = self.id_salt.with("popup_area");
-
-        if resp.clicked() {
-            let is_open = ui
-                .data(|d| d.get_temp::<bool>(popup_open_id))
-                .unwrap_or(false);
-            ui.data_mut(|d| d.insert_temp(popup_open_id, !is_open));
-        }
-
-        let popup_pos = rect.min + self.anchor_offset;
-        show_clean_color_picker_popup(
-            ui,
-            self.id_salt,
-            self.color,
-            popup_open_id,
-            popup_area_id,
-            popup_pos,
-        );
-
-        resp
-    }
-
-    /// Allocates layout space and displays the color picker widget.
-    pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
-        let size = self.size.unwrap_or(Vec2::splat(16.0));
-        let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-        let resp = if let Some(tip) = &self.tooltip {
-            resp.on_hover_text(tip)
-        } else {
-            resp
-        };
-
-        let style = ui.style();
-        let stroke = if resp.hovered() {
-            egui::Stroke::new(1.5_f32, style.visuals.widgets.active.fg_stroke.color)
-        } else {
-            egui::Stroke::new(
-                1.0_f32,
-                style.visuals.widgets.noninteractive.fg_stroke.color,
-            )
-        };
-
-        let color_c32 = Color32::from_rgba_unmultiplied(
-            (self.color[0] * 255.0).round() as u8,
-            (self.color[1] * 255.0).round() as u8,
-            (self.color[2] * 255.0).round() as u8,
-            (self.color[3] * 255.0).round() as u8,
-        );
-
-        self.shape.paint(ui.painter(), rect, color_c32, stroke);
-
-        let popup_open_id = self.id_salt.with("popup_open");
-        let popup_area_id = self.id_salt.with("popup_area");
-
-        if resp.clicked() {
-            let is_open = ui
-                .data(|d| d.get_temp::<bool>(popup_open_id))
-                .unwrap_or(false);
-            ui.data_mut(|d| d.insert_temp(popup_open_id, !is_open));
-        }
-
-        let popup_pos = rect.min + self.anchor_offset;
-        show_clean_color_picker_popup(
-            ui,
-            self.id_salt,
-            self.color,
-            popup_open_id,
-            popup_area_id,
-            popup_pos,
-        );
-
-        resp
-    }
-}
 
 /// Color space selection for RGB channel displays (Byte 0-255 vs Float 0-1)
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum ColorGammaSpace {
+pub(crate) enum ColorGammaSpace {
     Byte,  // 0 - 255
     Float, // 0.0 - 1.0
 }
 
-/// Renders the streamlined color picker popup:
-/// - Top: Gamma space options (0-255 / 0-1), RGB channel inputs, and Copy button
-/// - Middle: Full-width 2D Saturation/Value color area
-/// - Bottom: Full-width Hue spectrum bar and Transparency (Alpha) bar
-fn show_clean_color_picker_popup(
+/// Renders the streamlined color picker popup.
+pub(crate) fn show_clean_color_picker_popup(
     ui: &mut egui::Ui,
     id_salt: egui::Id,
     color_rgba: &mut [f32; 4],
@@ -316,9 +59,7 @@ fn show_clean_color_picker_popup(
                 ui.set_width(popup_w);
                 let mut changed = false;
 
-                // =========================================================================
-                // TOP SECTION: RGB gamma space mode (0-255 vs 0-1), Copy button & RGB edits
-                // =========================================================================
+                // 1. TOP SECTION: RGB gamma space mode (0-255 vs 0-1), Copy button & RGB edits
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     ui.selectable_value(&mut gamma_space, ColorGammaSpace::Byte, "0-255");
@@ -500,9 +241,7 @@ fn show_clean_color_picker_popup(
 
                 ui.add_space(5.0);
 
-                // =========================================================================
-                // MIDDLE SECTION: 2D Saturation / Value Color Area (Expands full container)
-                // =========================================================================
+                // 2. MIDDLE SECTION: 2D Saturation / Value Color Area
                 let available_w = ui.available_width();
                 let sv_size = Vec2::new(available_w, 165.0);
                 let (sv_rect, sv_resp) = ui.allocate_exact_size(sv_size, egui::Sense::drag());
@@ -516,7 +255,6 @@ fn show_clean_color_picker_popup(
                     changed = true;
                 }
 
-                // Paint 2D Saturation-Value mesh
                 let mut sv_mesh = egui::Mesh::default();
                 let c_tl = Color32::WHITE;
                 let c_tr = Color32::from(Hsva::new(hsva.h, 1.0, 1.0, 1.0));
@@ -538,7 +276,6 @@ fn show_clean_color_picker_popup(
                     egui::StrokeKind::Inside,
                 );
 
-                // Cursor in 2D field
                 let cursor_pos = Pos2::new(
                     sv_rect.min.x + hsva.s * sv_rect.width(),
                     sv_rect.min.y + (1.0 - hsva.v) * sv_rect.height(),
@@ -558,10 +295,7 @@ fn show_clean_color_picker_popup(
 
                 ui.add_space(5.0);
 
-                // =========================================================================
-                // BOTTOM SECTION: Hue Spectrum Bar followed by Transparency (Alpha) Bar
-                // =========================================================================
-                // 1. Hue Bar
+                // 3. BOTTOM SECTION: Hue Spectrum Bar & Alpha Bar
                 let hue_size = Vec2::new(available_w, 15.0);
                 let (hue_rect, hue_resp) = ui.allocate_exact_size(hue_size, egui::Sense::drag());
 
@@ -572,7 +306,6 @@ fn show_clean_color_picker_popup(
                     changed = true;
                 }
 
-                // Paint 6-segment rainbow spectrum
                 let num_segments = 6;
                 let mut hue_mesh = egui::Mesh::default();
                 for i in 0..num_segments {
@@ -605,7 +338,6 @@ fn show_clean_color_picker_popup(
                     egui::StrokeKind::Inside,
                 );
 
-                // Cursor on Hue Bar
                 let hue_cursor_x = hue_rect.min.x + hsva.h * hue_rect.width();
                 let hue_cursor_rect = Rect::from_center_size(
                     Pos2::new(hue_cursor_x, hue_rect.center().y),
@@ -621,7 +353,6 @@ fn show_clean_color_picker_popup(
 
                 ui.add_space(4.0);
 
-                // 2. Transparency (Alpha) Bar
                 let alpha_size = Vec2::new(available_w, 15.0);
                 let (alpha_rect, alpha_resp) =
                     ui.allocate_exact_size(alpha_size, egui::Sense::drag());
@@ -634,7 +365,6 @@ fn show_clean_color_picker_popup(
                     changed = true;
                 }
 
-                // Checkered transparent background for alpha bar
                 let grid_size = 5.0;
                 let mut check_x = alpha_rect.min.x;
                 while check_x < alpha_rect.max.x {
@@ -660,7 +390,6 @@ fn show_clean_color_picker_popup(
                     check_x += grid_size;
                 }
 
-                // Alpha gradient over checkered background
                 let mut alpha_mesh = egui::Mesh::default();
                 let c_trans = Color32::from(Hsva::new(hsva.h, hsva.s, hsva.v, 0.0));
                 let c_opaque = Color32::from(Hsva::new(hsva.h, hsva.s, hsva.v, 1.0));
@@ -679,7 +408,6 @@ fn show_clean_color_picker_popup(
                     egui::StrokeKind::Inside,
                 );
 
-                // Cursor on Alpha Bar
                 let alpha_cursor_x = alpha_rect.min.x + hsva.a * alpha_rect.width();
                 let alpha_cursor_rect = Rect::from_center_size(
                     Pos2::new(alpha_cursor_x, alpha_rect.center().y),
@@ -693,14 +421,12 @@ fn show_clean_color_picker_popup(
                     egui::StrokeKind::Middle,
                 );
 
-                // If HSVA changed via 2D area / Hue / Alpha bars, update the output RGBA array
                 if changed {
                     let rgba_unmult = egui::ecolor::Rgba::from(hsva).to_rgba_unmultiplied();
                     *color_rgba = rgba_unmult;
                 }
             });
 
-            // Close popup on click outside
             if ui.input(|i| i.pointer.any_pressed())
                 && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
                 && !frame_resp.response.rect.contains(pos)
@@ -714,25 +440,4 @@ fn show_clean_color_picker_popup(
         d.insert_temp(hsva_id, hsva);
         d.insert_temp(gamma_space_id, gamma_space);
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_shape_color_picker_hsva_conversion() {
-        let rgba = [1.0, 0.0, 0.0, 1.0];
-        let hsva = Hsva::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
-        assert!((hsva.h - 0.0).abs() < 1e-3 || (hsva.h - 1.0).abs() < 1e-3);
-        assert!((hsva.s - 1.0).abs() < 1e-3);
-        assert!((hsva.v - 1.0).abs() < 1e-3);
-        assert!((hsva.a - 1.0).abs() < 1e-3);
-
-        let roundtrip = egui::ecolor::Rgba::from(hsva).to_rgba_unmultiplied();
-        assert!((roundtrip[0] - 1.0).abs() < 1e-3);
-        assert!((roundtrip[1] - 0.0).abs() < 1e-3);
-        assert!((roundtrip[2] - 0.0).abs() < 1e-3);
-        assert!((roundtrip[3] - 1.0).abs() < 1e-3);
-    }
 }

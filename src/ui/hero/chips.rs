@@ -109,7 +109,7 @@ pub fn render_ghost_slash_chip(ui: &mut egui::Ui, label: &str, desc: &str) -> eg
             rest,
             0.0,
             egui::TextFormat {
-                font_id: font_id.clone(),
+                font_id,
                 color: ui.visuals().text_color(),
                 ..Default::default()
             },
@@ -119,7 +119,7 @@ pub fn render_ghost_slash_chip(ui: &mut egui::Ui, label: &str, desc: &str) -> eg
             label,
             0.0,
             egui::TextFormat {
-                font_id: font_id.clone(),
+                font_id,
                 color: ui.visuals().text_color(),
                 ..Default::default()
             },

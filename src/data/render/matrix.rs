@@ -147,9 +147,9 @@ impl MatrixData {
         }
     }
 
-    /// Returns pre-cached unique values in O(1) constant time per frame.
-    pub fn detect_unique_values(&self) -> Option<Vec<f32>> {
-        self.unique_values.clone()
+    /// Returns pre-cached unique values in O(1) constant time per frame without allocations.
+    pub fn detect_unique_values(&self) -> Option<&[f32]> {
+        self.unique_values.as_deref()
     }
 
     /// Extracts a 1D line profile along dimension axis (`dim_axis`: 0 = along X/width, 1 = along Y/height).

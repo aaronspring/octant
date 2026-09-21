@@ -178,9 +178,9 @@ impl OctantApp {
             block.origin,
             block.shape,
             if is_3d_spatial_anim {
-                vec![]
+                &[] as &[usize]
             } else {
-                fixed_indices.clone()
+                fixed_indices.as_slice()
             },
             x_range,
             y_range,
