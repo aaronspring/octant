@@ -43,10 +43,9 @@ pub fn render_variable_row(
         ui.icon(Icon::VariableDoc, 11.0);
         if let Some(units) = &var_info.units {
             if !units.is_empty() {
-                ui.selectable_label(
-                    is_selected,
-                    egui::RichText::new(format!("{}  ({})", leaf_name, units)).strong(),
-                )
+                let mut buf = [0u8; 96];
+                let label_text = format_leaf_units(&mut buf, leaf_name, units);
+                ui.selectable_label(is_selected, egui::RichText::new(label_text).strong())
             } else {
                 ui.selectable_label(is_selected, egui::RichText::new(leaf_name).strong())
             }
@@ -81,4 +80,12 @@ pub fn render_variable_row(
     if clicked {
         *newly_selected_idx = Some(idx);
     }
+}
+
+fn format_leaf_units<'a>(buf: &'a mut [u8; 96], leaf: &str, units: &str) -> &'a str {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    let _ = write!(cursor, "{}  ({})", leaf, units);
+    let len = cursor.position() as usize;
+    std::str::from_utf8(&buf[..len]).unwrap_or("")
 }

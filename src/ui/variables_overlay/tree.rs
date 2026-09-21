@@ -33,7 +33,9 @@ pub fn render_tree_group(
                 .show_header(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.icon(Icon::Folder, 12.0);
-                        ui.label(egui::RichText::new(format!("/ ({})", root_count)).strong());
+                        let mut buf = [0u8; 32];
+                        let label_text = format_root_count(&mut buf, root_count);
+                        ui.label(egui::RichText::new(label_text).strong());
                     });
                 })
                 .body(|ui| {
@@ -96,7 +98,9 @@ pub fn render_subgroup(
     .show_header(ui, |ui| {
         ui.horizontal(|ui| {
             ui.icon(Icon::Folder, 12.0);
-            ui.label(egui::RichText::new(format!("{} ({})", subgroup.name, total_count)).strong());
+            let mut buf = [0u8; 96];
+            let label_text = format_subgroup_title(&mut buf, &subgroup.name, total_count);
+            ui.label(egui::RichText::new(label_text).strong());
         });
     })
     .body(|ui| {
@@ -131,4 +135,20 @@ pub fn render_subgroup(
             },
         );
     });
+}
+
+fn format_root_count(buf: &mut [u8; 32], count: usize) -> &str {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    let _ = write!(cursor, "/ ({})", count);
+    let len = cursor.position() as usize;
+    std::str::from_utf8(&buf[..len]).unwrap_or("/")
+}
+
+fn format_subgroup_title<'a>(buf: &'a mut [u8; 96], name: &str, count: usize) -> &'a str {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    let _ = write!(cursor, "{} ({})", name, count);
+    let len = cursor.position() as usize;
+    std::str::from_utf8(&buf[..len]).unwrap_or("")
 }
